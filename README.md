@@ -805,24 +805,20 @@ above runs on a laptop. What remains:
    rewrite, and production env templates. What remains is account-level and
    cannot be scripted: create the hosts, point DNS, paste the secrets. Step by
    step in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
-2. **Password reset delivery.** `auth.controller.ts` logs the reset link to the
-   server console behind a TODO. Someone who clicks "forgot password" currently
-   receives nothing; this needs real SMS or WhatsApp before the app is exposed
-   to the internet.
-3. **Backups.** None exist. These are a business's books — a lost database is
+2. **Backups.** None exist. These are a business's books — a lost database is
    lost receivables.
 
-4. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
+3. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
    order but the ledger is served in `entryDate` order, and the two disagree
    whenever an entry is backdated. The parties screen sorts around it within a
    page; the real fix belongs in `getPartyLedger`.
-5. **GSTR-1 JSON export** — the return that currently costs the shop CA
+4. **GSTR-1 JSON export** — the return that currently costs the shop CA
    fees to prepare by hand. Every input it needs (B2B/B2C split, HSN summary, credit-note
    reporting with original invoice references) is already modelled.
-6. **Voice queries, then voice billing** — the confirmation card calls
+5. **Voice queries, then voice billing** — the confirmation card calls
    `POST /api/sales-invoices/preview`, which already exists. Needs an Anthropic
    key and a Sarvam key; nothing in the codebase touches them until then.
-7. **E-way bill** generation against the NIC portal via a GSP. Requires a
+6. **E-way bill** generation against the NIC portal via a GSP. Requires a
    commercial GSP account before it can be verified against anything real.
 
 ## Test coverage

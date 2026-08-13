@@ -2,6 +2,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { env, isProduction } from '../../config/env.js';
 import { unauthorized } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
+import { notifier } from '../../lib/notifier.js';
 import * as authService from './auth.service.js';
 import {
   changePasswordSchema,
@@ -11,6 +12,7 @@ import {
   refreshSchema,
   registerSchema,
   resetPasswordSchema,
+  setUserPasswordSchema,
   updateUserSchema,
 } from './auth.schemas.js';
 
@@ -117,13 +119,29 @@ export const forgotPassword = handler(async (req, res) => {
   const result = await authService.requestPasswordReset(identifier, contextOf(req));
 
   if (result) {
-    // TODO: deliver via WhatsApp/SMS for phone identifiers, email otherwise.
-    // Logging the link is a development affordance only — this branch must be
-    // replaced before the app is exposed to the internet.
-    if (!isProduction) {
-      logger.info(
-        { resetUrl: `${env.APP_URL}/reset-password?token=${result.token}` },
-        'Password reset link (dev only)',
+    /**
+     * `APP_URL` is the frontend's origin. In a single-origin deployment the
+     * frontend is this same server, so fall back to the request's own host
+     * rather than sending a link to wherever APP_URL happened to be left
+     * pointing — a reset link to the wrong host is a reset link to nowhere.
+     */
+    const base = env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+    const delivery = await notifier.sendPasswordReset({
+      to: result.user.email ?? result.user.phone,
+      channel: result.user.email ? 'email' : 'sms',
+      recipientName: result.user.fullName,
+      resetUrl: `${base}/reset-password?token=${result.token}`,
+      expiresInMinutes: authService.PASSWORD_RESET_TTL_MINUTES,
+    });
+
+    if (!delivery.delivered) {
+      // Logged, never returned. Telling the requester that delivery failed
+      // would confirm the account exists, which is exactly what the uniform
+      // response below is protecting.
+      logger.error(
+        { via: delivery.via, reason: delivery.reason, userId: result.user.id },
+        'Password reset link could not be delivered',
       );
     }
   }
@@ -133,6 +151,30 @@ export const forgotPassword = handler(async (req, res) => {
   res.json({
     message: 'If that account exists, a reset link has been sent.',
   });
+});
+
+/**
+ * The owner sets a staff member's password directly.
+ *
+ * This is the path that actually works in an Indian shop. Reaching a mobile by
+ * SMS needs DLT registration, most counter staff have no email, and the owner
+ * is standing next to them anyway — so the honest answer to "I forgot my
+ * password" is the owner setting a new one and saying it out loud.
+ *
+ * Owner-only, and it cannot target another owner or the owner themselves:
+ * changing your own password goes through `change-password`, which requires
+ * knowing the current one.
+ */
+export const setUserPassword = handler(async (req, res) => {
+  const { newPassword } = setUserPasswordSchema.parse(req.body);
+  await authService.setStaffPassword(
+    req.auth!.businessId,
+    req.auth!.userId,
+    req.params.userId!,
+    newPassword,
+    contextOf(req),
+  );
+  res.json({ message: 'Password set. Tell them the new password — they can change it after signing in.' });
 });
 
 export const resetPassword = handler(async (req, res) => {

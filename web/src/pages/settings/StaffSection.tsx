@@ -30,6 +30,7 @@ export function StaffSection() {
   const { user: me } = useAuth();
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
+  const [settingPasswordFor, setSettingPasswordFor] = useState<User | null>(null);
 
   const users = useQuery({
     queryKey: ['users'],
@@ -103,16 +104,25 @@ export function StaffSection() {
                       {isMe || person.role === 'OWNER' ? (
                         <span className="text-xs text-slate-400">—</span>
                       ) : (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          loading={setActive.isPending && setActive.variables?.id === person.id}
-                          onClick={() =>
-                            setActive.mutate({ id: person.id, isActive: !person.isActive })
-                          }
-                        >
-                          {person.isActive ? 'Disable' : 'Enable'}
-                        </Button>
+                        <div className="flex justify-end gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setSettingPasswordFor(person)}
+                          >
+                            Set password
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            loading={setActive.isPending && setActive.variables?.id === person.id}
+                            onClick={() =>
+                              setActive.mutate({ id: person.id, isActive: !person.isActive })
+                            }
+                          >
+                            {person.isActive ? 'Disable' : 'Enable'}
+                          </Button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -129,6 +139,13 @@ export function StaffSection() {
       </Alert>
 
       {adding ? <AddStaffDialog onClose={() => setAdding(false)} /> : null}
+
+      {settingPasswordFor ? (
+        <SetPasswordDialog
+          person={settingPasswordFor}
+          onClose={() => setSettingPasswordFor(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -262,6 +279,110 @@ function AddStaffDialog({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         </fieldset>
+
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
+    </Dialog>
+  );
+}
+
+/**
+ * The owner setting a staff member's password.
+ *
+ * This is the working answer to "I forgot my password" in an Indian shop. SMS
+ * to a mobile needs DLT registration under the TRAI mandate, most counter staff
+ * have no email address, and the owner is standing next to them anyway.
+ *
+ * The password is shown rather than masked, because the owner has to read it
+ * out. Setting it signs that person out everywhere immediately — usually the
+ * point, since the reason for resetting is often that someone else knows the
+ * old one.
+ */
+function SetPasswordDialog({ person, onClose }: { person: User; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [done, setDone] = useState(false);
+
+  const set = useMutation({
+    mutationFn: () =>
+      api.post(`/api/auth/users/${person.id}/set-password`, { newPassword: password }),
+    onSuccess: () => setDone(true),
+  });
+
+  const fieldErrors = set.error instanceof ApiError ? set.error.fieldErrors : {};
+  const ready = password.length >= 10 && !set.isPending;
+
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (ready) set.mutate();
+  }
+
+  if (done) {
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        title="Password set"
+        footer={<Button onClick={onClose}>Done</Button>}
+      >
+        <div className="space-y-4">
+          <Alert tone="success">
+            {person.fullName} can now sign in with this password. They have been signed out
+            everywhere else.
+          </Alert>
+          <div className="rounded-lg bg-slate-50 px-3 py-3 text-center dark:bg-slate-800/60">
+            <p className="text-xs text-slate-500">Tell them this — it is not shown again</p>
+            <p className="mt-1 font-mono text-lg font-semibold text-slate-900 dark:text-slate-100">
+              {password}
+            </p>
+          </div>
+          <p className="text-xs text-slate-500">
+            They can change it themselves from their own account after signing in.
+          </p>
+        </div>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Set password for ${person.fullName}`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={onSubmit} loading={set.isPending} disabled={!ready}>
+            Set password
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
+        <ErrorAlert error={set.error} />
+
+        <Alert tone="warning">
+          This signs {person.fullName} out of every device straight away, and cancels any reset
+          link already sent to them.
+        </Alert>
+
+        <Field
+          label="New password"
+          // Shown, not masked: the owner has to read it out loud.
+          type="text"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          error={fieldErrors['newPassword']}
+          hint={
+            password.length > 0 && password.length < 10
+              ? `${10 - password.length} more characters needed`
+              : 'At least 10 characters. A short phrase they will remember beats symbols.'
+          }
+          required
+          autoFocus
+          placeholder="counter wala paper"
+        />
 
         <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
       </form>

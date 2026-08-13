@@ -31,6 +31,21 @@ const envSchema = z.object({
   MAX_FAILED_LOGINS: z.coerce.number().int().positive().default(5),
   LOCKOUT_MINUTES: z.coerce.number().int().positive().default(15),
 
+  // ---- Outbound messages ----
+  /**
+   * Resend API key. When set together with MAIL_FROM, password reset links are
+   * emailed; otherwise they are only logged, which in production means nobody
+   * receives them.
+   *
+   * Not SMS: reaching an Indian mobile requires DLT registration of the sender
+   * ID and every template under the TRAI mandate, which needs a registered
+   * business and several days. See src/lib/notifier.ts.
+   */
+  RESEND_API_KEY: z.string().optional(),
+  /// e.g. "Vyapar Sathi <noreply@yourdomain.com>". Resend requires the domain
+  /// to be verified before it will deliver to arbitrary recipients.
+  MAIL_FROM: z.string().optional(),
+
   ANTHROPIC_API_KEY: z.string().optional(),
   ASR_PROVIDER: z.enum(['sarvam', 'openai']).default('sarvam'),
   SARVAM_API_KEY: z.string().optional(),

@@ -25,7 +25,9 @@ export interface AuthTokens {
   refreshTokenExpiresAt: Date;
 }
 
-const PASSWORD_RESET_TTL_MINUTES = 30;
+/// Exported so the message telling the recipient how long they have cannot
+/// drift away from the value actually enforced.
+export const PASSWORD_RESET_TTL_MINUTES = 30;
 
 /// Units every paper shop needs on day one. conversionToBase is set per product
 /// later — a ream of A4 and a ream of 100gsm art paper do not weigh the same.
@@ -680,6 +682,69 @@ export async function listUsers(businessId: string) {
     orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
   });
   return users.map(sanitizeUser);
+}
+
+/**
+ * The owner sets a staff member's password directly.
+ *
+ * The realistic answer to "I forgot my password" in a shop: SMS to an Indian
+ * mobile needs DLT registration, most counter staff have no email address, and
+ * the owner is standing right there.
+ *
+ * Bumping `tokenVersion` signs the staff member out everywhere immediately —
+ * necessary, because the reason for setting a password is often that someone
+ * else knows the old one.
+ */
+export async function setStaffPassword(
+  businessId: string,
+  actorId: string,
+  targetUserId: string,
+  newPassword: string,
+  ctx: RequestContext,
+): Promise<void> {
+  const target = await prisma.user.findFirst({ where: { id: targetUserId, businessId } });
+  if (!target) throw notFound('User not found');
+
+  // Your own password goes through change-password, which demands the current
+  // one. Otherwise a borrowed unlocked session could lock the real owner out.
+  if (target.id === actorId) {
+    throw badRequest('Use change password for your own account');
+  }
+
+  // One owner cannot seize another owner's account. Two owners disagreeing is
+  // a conversation, not a support feature.
+  if (target.role === 'OWNER') {
+    throw forbidden("An owner's password cannot be set by someone else");
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: targetUserId },
+      data: { passwordHash, tokenVersion: { increment: 1 } },
+    }),
+    // Any reset link already in flight must stop working.
+    prisma.passwordResetToken.updateMany({
+      where: { userId: targetUserId, usedAt: null },
+      data: { usedAt: new Date() },
+    }),
+    prisma.session.updateMany({
+      where: { userId: targetUserId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    }),
+    prisma.auditLog.create({
+      data: {
+        businessId,
+        userId: actorId,
+        action: 'user.password_set_by_owner',
+        entityType: 'User',
+        entityId: targetUserId,
+        ipAddress: ctx.ipAddress ?? null,
+        userAgent: ctx.userAgent ?? null,
+      },
+    }),
+  ]);
 }
 
 export async function updateUser(

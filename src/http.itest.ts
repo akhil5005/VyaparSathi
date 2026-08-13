@@ -439,6 +439,80 @@ describe('HTTP API', () => {
       assert.equal(edited.body.error.code, 'FORBIDDEN');
     });
 
+    it('lets the owner set a staff password, and signs that person out', async () => {
+      const staffPhone = nextPhone();
+      const created = await client.post(
+        '/api/auth/users',
+        {
+          fullName: 'Second Staff',
+          phone: staffPhone,
+          password: OWNER_PASSWORD,
+          role: 'BILLING_STAFF',
+        },
+        { token: ownerToken },
+      );
+      assert.equal(created.status, 201);
+
+      const before = await client.post('/api/auth/login', {
+        identifier: staffPhone,
+        password: OWNER_PASSWORD,
+      });
+      assert.equal(before.status, 200, 'signs in with the original password');
+      const staffAccess = before.body.accessToken;
+
+      const newPassword = 'a-brand-new-passphrase';
+      const set = await client.post(
+        `/api/auth/users/${created.body.user.id}/set-password`,
+        { newPassword },
+        { token: ownerToken },
+      );
+      assert.equal(set.status, 200, JSON.stringify(set.body));
+
+      // The old password stops working and the new one starts.
+      const old = await client.post('/api/auth/login', {
+        identifier: staffPhone,
+        password: OWNER_PASSWORD,
+      });
+      assert.equal(old.status, 401);
+
+      const fresh = await client.post('/api/auth/login', {
+        identifier: staffPhone,
+        password: newPassword,
+      });
+      assert.equal(fresh.status, 200);
+
+      // tokenVersion was bumped, so the token they were holding is dead —
+      // the point of the feature is that whoever knew the old password is out.
+      const stale = await client.get('/api/auth/me', { token: staffAccess });
+      assert.equal(stale.status, 401, 'the existing session was revoked');
+    });
+
+    it('refuses to set an owner’s password, or your own', async () => {
+      const users = await client.get('/api/auth/users', { token: ownerToken });
+      const owner = users.body.users.find((u: any) => u.role === 'OWNER');
+
+      // Own account must go through change-password, which demands the current
+      // password — otherwise a borrowed unlocked session takes over the shop.
+      const self = await client.post(
+        `/api/auth/users/${owner.id}/set-password`,
+        { newPassword: 'some-other-passphrase' },
+        { token: ownerToken },
+      );
+      assert.ok(self.status >= 400, `expected a rejection, got ${self.status}`);
+    });
+
+    it('does not let staff set anyone’s password', async () => {
+      const users = await client.get('/api/auth/users', { token: ownerToken });
+      const target = users.body.users.find((u: any) => u.role === 'BILLING_STAFF');
+
+      const attempt = await client.post(
+        `/api/auth/users/${target.id}/set-password`,
+        { newPassword: 'a-long-enough-passphrase' },
+        { token: staffToken },
+      );
+      assert.equal(attempt.status, 403);
+    });
+
     it('keeps staff management to the owner', async () => {
       const asStaff = await client.get('/api/auth/users', { token: staffToken });
       assert.equal(asStaff.status, 403);

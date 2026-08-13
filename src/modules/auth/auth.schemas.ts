@@ -82,6 +82,12 @@ export const createUserSchema = z.object({
   role: z.nativeEnum(UserRole),
 });
 
+/// The owner setting a staff member's password. Same strength rule as anywhere
+/// else — a temporary password is still a password.
+export const setUserPasswordSchema = z.object({
+  newPassword: passwordSchema,
+});
+
 export const updateUserSchema = z.object({
   fullName: z.string().trim().min(2).max(120).optional(),
   role: z.nativeEnum(UserRole).optional(),

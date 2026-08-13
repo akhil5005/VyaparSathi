@@ -115,11 +115,33 @@ prove it works — a backup nobody has restored is a hypothesis.
 
 ---
 
+## Forgotten passwords
+
+Two paths, and the second is the one that works without any external setup.
+
+**Owner sets it.** Settings → Staff → **Set password**. Available today, needs
+nothing configured. The password is shown rather than masked so the owner can
+read it out, and setting it signs that person out of every device — usually the
+point, since the reason for a reset is often that someone else knows the old
+one. An owner cannot set another owner's password, or their own; changing your
+own goes through **change password**, which demands the current one.
+
+**Emailed reset link.** Set `RESEND_API_KEY` and `MAIL_FROM` and the "forgot
+password" flow emails a one-time link that expires in 30 minutes. Two caveats:
+Resend needs a verified sending domain before it will deliver to arbitrary
+recipients, and staff who sign in with only a phone number have no address to
+send to. Without these variables the link is logged and delivered nowhere — the
+server says so loudly at startup and on every attempt, rather than pretending.
+
+**Why not SMS.** Reaching an Indian mobile requires DLT registration under the
+TRAI mandate: the sender ID and every message template must be registered with
+a telecom operator, which takes days and needs a registered business entity.
+WhatsApp's Cloud API needs Meta business verification. `src/lib/notifier.ts` is
+an interface with one implementation, so adding either later is a class and one
+branch — nothing that calls it changes.
+
 ## Still missing before real customers
 
-- **Password reset delivery.** `auth.controller.ts` logs the reset link to the
-  server console behind a `TODO`. Someone clicking "forgot password" in
-  production receives nothing.
 - **Error monitoring.** Nothing reports a 500. Sentry's free tier is about ten
   lines.
 

@@ -29,6 +29,12 @@ export function createAuthRouter(limiters: Limiters = buildLimiters(true)): Rout
   // ---- Owner only ----
   authRouter.get('/users', authenticate, authorize(...CAN_MANAGE_USERS), controller.listUsers);
   authRouter.post('/users', authenticate, authorize(...CAN_MANAGE_USERS), controller.createUser);
+  authRouter.post(
+    '/users/:userId/set-password',
+    authenticate,
+    authorize(...CAN_MANAGE_USERS),
+    controller.setUserPassword,
+  );
   authRouter.patch(
     '/users/:userId',
     authenticate,
