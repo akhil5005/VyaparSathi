@@ -22,18 +22,27 @@ ENV NODE_ENV=production
 
 # ---- Dependencies -----------------------------------------------------------
 # Copied first so a code-only change reuses these layers.
-# `--include=dev` because the build needs TypeScript and Vite, and the start
-# command needs the Prisma CLI for `migrate deploy`.
+#
+# `--include=dev` is required on BOTH installs, and is easy to get wrong:
+# `NODE_ENV=production` above makes npm default to `--omit=dev`, so without the
+# flag it silently installs only runtime dependencies. For the web app that
+# means no Vite, no TypeScript and no Tailwind — nine packages instead of two
+# hundred — and the build then fails with "Cannot find module 'vite'".
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
 
-COPY web/package.json web/package-lock.json ./web/
-RUN npm --prefix web ci
+# WORKDIR rather than `npm --prefix web`: --prefix is reliable for `run` but
+# muddles which package.json `ci` reads, and being explicit costs nothing.
+WORKDIR /app/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --include=dev
 
 # ---- Build the web app ------------------------------------------------------
 # No VITE_API_URL: empty means same origin, which is the point of this image.
-COPY web ./web
-RUN npm --prefix web run build
+COPY web ./
+RUN npm run build
+
+WORKDIR /app
 
 # ---- Build the API ----------------------------------------------------------
 # The schema is needed here for `prisma generate`, and again at runtime for
