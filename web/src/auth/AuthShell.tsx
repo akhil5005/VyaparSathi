@@ -23,8 +23,11 @@ export function AuthShell({
       <main className="flex flex-1 items-center justify-center px-4 py-10">
         <div className={wide ? 'w-full max-w-2xl' : 'w-full max-w-sm'}>
           <div className="mb-8 text-center">
-            <div className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-lg font-bold text-white dark:bg-slate-100 dark:text-slate-900">
-              G
+            <div
+              className="mb-3 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 text-lg font-bold text-white dark:bg-slate-100 dark:text-slate-900"
+              aria-hidden="true"
+            >
+              VS
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
               {title}

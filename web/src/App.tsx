@@ -15,6 +15,7 @@ import { PurchasesPage } from './pages/purchases/PurchasesPage';
 import { InvoicesPage } from './pages/invoices/InvoicesPage';
 import { PartiesPage } from './pages/parties/PartiesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
+import { NotesPage } from './pages/notes/NotesPage';
 import { ApiError } from './lib/api';
 
 const queryClient = new QueryClient({
@@ -68,6 +69,7 @@ export default function App() {
                 </Route>
 
                 <Route element={<RequireRole allow={CAN_EDIT_MASTERS} />}>
+                  <Route path="credit-notes" element={<NotesPage />} />
                   <Route path="purchases" element={<PurchasesPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                 </Route>

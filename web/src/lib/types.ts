@@ -569,6 +569,106 @@ export interface SalesInvoiceDetail extends SalesInvoice {
 }
 
 // ---------------------------------------------------------------------------
+// Credit and debit notes
+// ---------------------------------------------------------------------------
+
+export type NoteType = 'CREDIT_NOTE' | 'DEBIT_NOTE';
+
+export type NoteReason =
+  | 'SALES_RETURN'
+  | 'PURCHASE_RETURN'
+  | 'RATE_DIFFERENCE'
+  | 'QUANTITY_SHORTAGE'
+  | 'DAMAGED_GOODS'
+  | 'POST_SALE_DISCOUNT'
+  | 'CORRECTION'
+  | 'OTHER';
+
+/**
+ * One line of an invoice, with how much of it is still creditable.
+ *
+ * `creditableQuantity` is the server's ceiling: invoiced minus everything
+ * already credited across every earlier note. It is the number the quantity box
+ * must be capped at, so a double return fails in the form rather than on submit.
+ */
+export interface CreditableLine {
+  invoiceItemId: string;
+  productId: string;
+  productName: string;
+  unitName: string;
+  invoicedQuantity: Quantity;
+  alreadyCredited: Quantity;
+  creditableQuantity: Quantity;
+  rate: Money;
+}
+
+export interface CreditableResponse {
+  invoice: {
+    id: string;
+    invoiceNumber: string | null;
+    invoiceDate: IsoDate;
+    partyName: string;
+  };
+  lines: CreditableLine[];
+}
+
+export interface NoteLine {
+  lineNumber: number;
+  productName: string;
+  hsnCode: string;
+  quantity: Quantity;
+  unitName: string;
+  rate: Money;
+  taxableValue: Money;
+  cgstRate: Money;
+  cgstAmount: Money;
+  sgstRate: Money;
+  sgstAmount: Money;
+  igstRate: Money;
+  igstAmount: Money;
+  lineTotal: Money;
+}
+
+/** `POST /api/notes/preview` — full computation, nothing written. */
+export interface NotePreviewResponse {
+  noteType: NoteType;
+  reason: NoteReason;
+  /// Derived from the reason: a return moves goods back, a rate correction
+  /// does not. The server decides; the screen only reports it.
+  affectsStock: boolean;
+  supplyType: SupplyType;
+  party: { id: string; displayName: string };
+  against: { number: string | null; date: IsoDate };
+  lines: NoteLine[];
+  totals: InvoiceTotals;
+}
+
+export interface CreditNote extends InvoiceTotals {
+  id: string;
+  noteNumber: string | null;
+  noteType: NoteType;
+  noteDate: IsoDate;
+  status: InvoiceStatus;
+  reason: NoteReason;
+  reasonNote: string | null;
+  partyId: string;
+  partyName: string;
+  affectsStock: boolean;
+  againstSalesInvoiceId: string | null;
+  againstPurchaseInvoiceId: string | null;
+  party?: { id: string; displayName: string };
+}
+
+export interface NoteListResponse {
+  notes: CreditNote[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalValue: Money;
+  totalTaxable: Money;
+}
+
+// ---------------------------------------------------------------------------
 // Purchases
 // ---------------------------------------------------------------------------
 

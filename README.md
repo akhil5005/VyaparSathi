@@ -582,6 +582,10 @@ web/
         InvoicesPage.tsx       look one up afterwards; filter, search, reprint
         InvoiceDetailDialog.tsx  read-only by design
         CancelInvoiceDialog.tsx  spells out exactly what will move
+      notes/
+        NotesPage.tsx          credit notes raised, and why
+        NewCreditNoteDialog.tsx  capped at what is still creditable
+        reasons.ts             each reason says whether stock moves
       parties/
         PartiesPage.tsx        customers and suppliers in one book
         PartyDetailDialog.tsx  the account, line by line
@@ -786,25 +790,37 @@ Full AI architecture and the Claude call shape: **[docs/AI_STACK.md](docs/AI_STA
 
 ## Not built yet
 
-The accounting core is complete and proven end to end over HTTP. The web app
-covers the whole trading cycle — **purchases** (buy from the mill, set the
-cost), **products &amp; stock**, **billing**, **invoices** (look one up, reprint,
-cancel), **payments** (collect, chase udhaar, bank cheques) — plus
-authentication and the dashboard. What remains:
+Every screen is built. The web app covers the whole trading cycle —
+**purchases** (buy from the mill, set the cost), **products &amp; stock**,
+**billing**, **invoices** (look one up, reprint, cancel), **credit notes**
+(returns and corrections), **payments** (collect, chase udhaar, bank cheques),
+**customers &amp; suppliers** with their ledgers, and **settings** — plus
+authentication and the dashboard.
 
-1. **Settings** — the last placeholder. Printer profiles, HSN rate changes and
-   staff accounts all have finished, tested APIs but no screen.
-2. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
+**Nothing is deployed yet**, which is the largest remaining gap: all of the
+above runs on a laptop. What remains:
+
+1. **Deploy it.** A managed Postgres, the API hosted, the frontend on a static
+   host, DNS across the two subdomains. Until this happens the shop cannot use
+   any of it.
+2. **Password reset delivery.** `auth.controller.ts` logs the reset link to the
+   server console behind a TODO. Someone who clicks "forgot password" currently
+   receives nothing; this needs real SMS or WhatsApp before the app is exposed
+   to the internet.
+3. **Backups.** None exist. These are a business's books — a lost database is
+   lost receivables.
+
+4. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
    order but the ledger is served in `entryDate` order, and the two disagree
    whenever an entry is backdated. The parties screen sorts around it within a
    page; the real fix belongs in `getPartyLedger`.
-3. **GSTR-1 JSON export** — the return that currently costs the shop CA
+5. **GSTR-1 JSON export** — the return that currently costs the shop CA
    fees to prepare by hand. Every input it needs (B2B/B2C split, HSN summary, credit-note
    reporting with original invoice references) is already modelled.
-4. **Voice queries, then voice billing** — the confirmation card calls
+6. **Voice queries, then voice billing** — the confirmation card calls
    `POST /api/sales-invoices/preview`, which already exists. Needs an Anthropic
    key and a Sarvam key; nothing in the codebase touches them until then.
-5. **E-way bill** generation against the NIC portal via a GSP. Requires a
+7. **E-way bill** generation against the NIC portal via a GSP. Requires a
    commercial GSP account before it can be verified against anything real.
 
 ## Test coverage

@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
   { to: '/invoices', label: 'Invoices' },
   { to: '/parties', label: 'Customers & suppliers' },
   { to: '/products', label: 'Products & stock' },
+  { to: '/credit-notes', label: 'Credit notes', allow: CAN_EDIT_MASTERS },
   { to: '/purchases', label: 'Purchases', allow: CAN_EDIT_MASTERS },
   { to: '/payments', label: 'Payments & udhaar', allow: CAN_RECEIVE_PAYMENT },
   { to: '/settings', label: 'Settings', allow: CAN_EDIT_MASTERS },
