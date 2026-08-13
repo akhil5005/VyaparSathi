@@ -150,6 +150,11 @@ export function createApp(options: AppOptions = {}) {
      * successful response containing gibberish.
      */
     app.get(/^(?!\/api\/).*/, (_req, res, next) => {
+      // Set here as well as in express.static above: this path does not go
+      // through that middleware, so without it Express applies its default
+      // `public, max-age=0` and a proxy is free to hold a copy of the document
+      // that names which bundle to load.
+      res.setHeader('Cache-Control', 'no-store');
       res.sendFile(path.join(WEB_DIST, 'index.html'), (error) => {
         if (error) next(error);
       });
