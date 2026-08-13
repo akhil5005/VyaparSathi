@@ -1,12 +1,34 @@
 # GSTCal
 
-GST billing, inventory and ledger for a paper trading business — customers,
-products with reams↔kg conversion, purchases with input tax credit, sales
-invoices with correct CGST/SGST/IGST, credit notes, payment allocation, cheque
-tracking, and printing to both A4 and thermal. E-way bills are modelled but not
-yet generated; see [Not built yet](#not-built-yet).
+GST billing, inventory and ledger for a paper trading business in Punjab —
+customers, products with reams↔kg conversion, purchases with input tax credit,
+sales invoices with correct CGST/SGST/IGST, credit notes, payment allocation,
+cheque tracking, and printing to both A4 and thermal. E-way bills are modelled
+but not yet generated; see [Not built yet](#not-built-yet).
 
 **Stack:** Node.js + Express + TypeScript · PostgreSQL + Prisma · React + Vite + Tailwind · Claude for voice billing.
+
+Built for a real shop replacing a legacy desktop package, so the constraints are
+the trade's own rather than invented: paper is bought from the mill by weight
+and sold over the counter by the ream, invoice numbers must be gap-free within a
+financial year because GST law says so, and a bill has to be in a customer's
+hand in under a minute.
+
+**Where to look first**
+
+- [`web/src/pages/billing/`](web/src/pages/billing) — the counter screen. The
+  browser computes no money at all; every figure comes from the same server code
+  that produces the invoice, so the screen and the printed bill cannot disagree.
+- [`src/modules/purchases/costing.ts`](src/modules/purchases/costing.ts) —
+  moving-average cost, freight apportioned by value, GST excluded when the
+  credit is reclaimable. 100 kg at ₹95 plus ₹500 freight becomes 42.76 reams at
+  ₹233.86 landed.
+- [`src/modules/invoices/numbering.ts`](src/modules/invoices/numbering.ts) —
+  gap-free numbering under a row lock, with a concurrency test proving 20
+  simultaneous allocations produce 20 distinct numbers.
+- [Test coverage](#test-coverage) — including a table of deliberate sabotage
+  used to check the tests actually catch what they claim to, and the real bugs
+  that fell out of it.
 
 The API and the web app are deployed to two subdomains of one domain
 (`api.example.me` and `app.example.me`), so every browser call is genuinely
@@ -311,7 +333,7 @@ reclaims the GST paid to suppliers.
 apportioned across lines in proportion to value, with the rounding residual
 pushed onto the largest line so the shares always add back to exactly the
 charge. Two edge cases the textbook formula doesn't cover are handled: when
-stock is negative (he bills before entering the purchase — normal here) the
+stock is negative (the shop bills before entering the purchase — normal here) the
 incoming rate simply becomes the new average, because averaging against a
 negative quantity produces nonsense.
 
@@ -339,7 +361,7 @@ and still owe cash. It also surfaces eligible credit from earlier periods that
 was never claimed, which is money left on the table.
 
 The report is explicitly indicative. Reversals, blocked credits and
-provisional-credit rules are not applied; the return your CA files is the
+provisional-credit rules are not applied; the return the CA files is the
 authority, and the response says so.
 
 Endpoints under `/api/purchases`: `GET /`, `POST /preview`, `POST /`,
@@ -774,8 +796,8 @@ authentication and the dashboard. What remains:
    order but the ledger is served in `entryDate` order, and the two disagree
    whenever an entry is backdated. The parties screen sorts around it within a
    page; the real fix belongs in `getPartyLedger`.
-3. **GSTR-1 JSON export** — the thing that would actually save your father's CA
-   fees. Every input it needs (B2B/B2C split, HSN summary, credit-note
+3. **GSTR-1 JSON export** — the return that currently costs the shop CA
+   fees to prepare by hand. Every input it needs (B2B/B2C split, HSN summary, credit-note
    reporting with original invoice references) is already modelled.
 4. **Voice queries, then voice billing** — the confirmation card calls
    `POST /api/sales-invoices/preview`, which already exists. Needs an Anthropic

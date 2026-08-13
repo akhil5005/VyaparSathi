@@ -55,19 +55,19 @@ which is the thing models are reliable at.
 
 **1. Voice never writes to the database.**
 Step ④ produces a *proposal*. Step ⑤ renders it as an editable confirmation card
-your father taps to accept. The commit in step ⑥ goes through the exact same
+the shopkeeper taps to accept. The commit in step ⑥ goes through the exact same
 service functions the manual form uses — same validation, same tax computation,
 same audit log. There is no voice-specific write path to get out of sync.
 
 **2. Read-only voice ships first.**
 "Sharma nu kinna paisa dena hai?" → answer. No write risk, immediately useful,
-and it lets you measure real-world ASR accuracy on your father's actual speech
+and it lets you measure real-world ASR accuracy on the shopkeeper's actual speech
 before anything can create a bad invoice. Build billing-by-voice only once the
-query path is reliably understanding him.
+query path is reliably understanding them.
 
 **3. Low confidence surfaces choices, it does not guess.**
 Below the confidence threshold, or when two candidate parties are within a few
-points of each other, show both and let him pick. A wrong customer on a bill is
+points of each other, show both and let the operator pick. A wrong customer on a bill is
 a much worse outcome than one extra tap.
 
 **4. Every voice-created invoice is flagged.**
@@ -76,7 +76,7 @@ what fraction of voice bills get edited before confirmation. That number is your
 accuracy metric — without it you are guessing about whether the feature works.
 
 **5. Store the audio and the transcript for failures.**
-When he corrects a proposal, keep the clip. That corpus is what lets you fix the
+When the operator corrects a proposal, keep the clip. That corpus is what lets you fix the
 parser and tune the prompt against real speech instead of imagined speech.
 
 ---
@@ -175,4 +175,4 @@ OPENAI_API_KEY=            # Whisper fallback only
    `Product.name` + `Product.aliasNames`.
 3. Read-only voice queries ("kinna paisa dena hai") end to end.
 4. Billing-by-voice with the confirmation card.
-5. TTS read-back once he is using voice daily.
+5. TTS read-back once voice is in daily use.
