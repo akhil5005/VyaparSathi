@@ -5,7 +5,7 @@ import { prisma } from './lib/prisma.js';
 
 const app = createApp();
 const server = app.listen(env.PORT, () => {
-  logger.info(`GSTCal API listening on http://localhost:${env.PORT}`);
+  logger.info(`Vyapar Sathi API listening on http://localhost:${env.PORT}`);
 });
 
 async function shutdown(signal: string) {

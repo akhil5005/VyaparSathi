@@ -68,7 +68,7 @@ export function Layout() {
 
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold text-slate-900 dark:text-slate-100">
-              {business?.tradeName || business?.legalName || 'GSTCal'}
+              {business?.tradeName || business?.legalName || 'Vyapar Sathi'}
             </p>
             {business ? (
               <p className="truncate font-mono text-xs text-slate-500">{business.gstin}</p>

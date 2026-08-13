@@ -1,4 +1,4 @@
-// GSTCal — GST billing, inventory and ledger for a paper trading business.
+// Vyapar Sathi — GST billing, inventory and ledger for a paper trading business.
 //
 // Design rules that the rest of the app depends on:
 //   1. Every tenant-owned row carries businessId. Never query without it.

@@ -1,0 +1,21 @@
+# Line endings are LF in the repository, always.
+#
+# Without this, a tool that writes files in Windows text mode silently converts
+# every \n to \r\n, and the next commit shows a whole-file diff for a one-word
+# change — which buries the actual edit and makes review pointless. Git checks
+# out LF here too, which every editor on Windows has handled for a decade.
+* text=auto eol=lf
+
+# Binaries must never be touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+
+# Generated; collapse it in diffs and reviews rather than scrolling past it.
+package-lock.json linguist-generated=true -diff

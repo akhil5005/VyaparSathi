@@ -14,7 +14,7 @@ import {
   updateUserSchema,
 } from './auth.schemas.js';
 
-const REFRESH_COOKIE = 'gstcal_rt';
+const REFRESH_COOKIE = 'vyapar_rt';
 
 const contextOf = (req: Request): authService.RequestContext => ({
   ipAddress: req.ip,

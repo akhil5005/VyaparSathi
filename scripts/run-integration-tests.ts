@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import EmbeddedPostgres from 'embedded-postgres';
 
 const PORT = Number(process.env.ITEST_PG_PORT ?? 55433);
-const DB_NAME = 'gstcal_itest';
+const DB_NAME = 'vyapar_sathi_itest';
 const USER = 'postgres';
 const PASSWORD = 'postgres';
 
@@ -36,7 +36,7 @@ const PASSWORD = 'postgres';
 // Overriding ITEST_PG_PORT therefore gets you a completely independent cluster,
 // which is the escape hatch when a previous run has leaked one.
 const dataDir =
-  process.env.ITEST_PG_DATADIR ?? path.join(os.tmpdir(), `gstcal-itest-pgdata-${PORT}`);
+  process.env.ITEST_PG_DATADIR ?? path.join(os.tmpdir(), `vyapar-sathi-itest-pgdata-${PORT}`);
 
 const DATABASE_URL = `postgresql://${USER}:${PASSWORD}@localhost:${PORT}/${DB_NAME}?schema=public`;
 

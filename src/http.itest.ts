@@ -76,7 +76,7 @@ describe('HTTP API', () => {
     // The refresh token is httpOnly and scoped to the auth routes, so no XSS
     // payload can read it and it is never sent to the billing endpoints.
     const setCookie = registered.headers.getSetCookie().join(';');
-    assert.match(setCookie, /gstcal_rt=/);
+    assert.match(setCookie, /vyapar_rt=/);
     assert.match(setCookie, /HttpOnly/i);
     assert.match(setCookie, /Path=\/api\/auth/i);
     // A password must never come back out, in any form.
@@ -275,8 +275,8 @@ describe('HTTP API', () => {
 
     it('refreshes from the httpOnly cookie alone, with no body', async () => {
       await client.post('/api/auth/register', registrationPayload());
-      // The client stored gstcal_rt from Set-Cookie, exactly as a browser would.
-      assert.ok(client.cookie('gstcal_rt'));
+      // The client stored vyapar_rt from Set-Cookie, exactly as a browser would.
+      assert.ok(client.cookie('vyapar_rt'));
 
       const refreshed = await client.post('/api/auth/refresh', {});
       assert.equal(refreshed.status, 200);

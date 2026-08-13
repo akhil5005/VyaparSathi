@@ -19,13 +19,13 @@ import fs from 'node:fs';
 import EmbeddedPostgres from 'embedded-postgres';
 
 const PORT = Number(process.env.DEV_PG_PORT ?? 55432);
-const DB_NAME = 'gstcal_dev';
+const DB_NAME = 'vyapar_sathi_dev';
 const USER = 'postgres';
 const PASSWORD = 'postgres';
 
 // Outside the repo so a stray cluster never lands in a commit, and outside the
 // project tree so the file watcher doesn't try to index it.
-const dataDir = path.join(os.tmpdir(), `gstcal-dev-pgdata-${PORT}`);
+const dataDir = path.join(os.tmpdir(), `vyapar-sathi-dev-pgdata-${PORT}`);
 
 const DATABASE_URL = `postgresql://${USER}:${PASSWORD}@localhost:${PORT}/${DB_NAME}?schema=public`;
 

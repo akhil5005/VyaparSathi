@@ -16,15 +16,15 @@ export interface AccessTokenPayload {
 export function signAccessToken(payload: AccessTokenPayload): string {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
     expiresIn: env.ACCESS_TOKEN_TTL,
-    issuer: 'gstcal',
-    audience: 'gstcal-api',
+    issuer: 'vyapar-sathi',
+    audience: 'vyapar-sathi-api',
   } as jwt.SignOptions);
 }
 
 export function verifyAccessToken(token: string): AccessTokenPayload {
   return jwt.verify(token, env.JWT_ACCESS_SECRET, {
-    issuer: 'gstcal',
-    audience: 'gstcal-api',
+    issuer: 'vyapar-sathi',
+    audience: 'vyapar-sathi-api',
   }) as AccessTokenPayload;
 }
 

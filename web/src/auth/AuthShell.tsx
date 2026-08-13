@@ -39,7 +39,7 @@ export function AuthShell({
           </div>
 
           <p className="mt-6 text-center text-xs text-slate-400">
-            GSTCal — GST billing, inventory and ledger
+            Vyapar Sathi — GST billing, inventory and ledger
           </p>
         </div>
       </main>

@@ -1,4 +1,6 @@
-# GSTCal
+# Vyapar Sathi
+
+*व्यापार साथी — "business companion"*
 
 GST billing, inventory and ledger for a paper trading business in Punjab —
 customers, products with reams↔kg conversion, purchases with input tax credit,
@@ -157,8 +159,8 @@ schema file. The important ones:
 - **GST rates live on HSN with an effective-date range**, never as a column on
   the product — so a Council rate revision is one row, and old invoices keep
   printing the rate that applied on their date.
-- **`ProductUnit.conversionToBase`** is snapshotted onto every invoice line. He
-  buys in kg from the mill and sells in reams; correcting a conversion factor
+- **`ProductUnit.conversionToBase`** is snapshotted onto every invoice line. Paper
+  is bought in kg from the mill and sold in reams; correcting a conversion factor
   later must not silently rewrite last year's stock.
 - **Place of supply is derived from the GSTIN state code**, never picked from a
   dropdown. `src/lib/gstin.ts` validates the 15-char format *and* the mod-36
@@ -265,7 +267,7 @@ Other behaviour worth knowing:
   deleting the originals, and does **not** release the invoice number. It is
   blocked once payments are allocated — a credit note is the right instrument
   then.
-- **Negative stock warns, it does not block.** He bills before entering the
+- **Negative stock warns, it does not block.** The shop bills before entering the
   purchase; refusing the sale would be worse than the warning.
 - **`POST /preview`** runs the full computation and returns totals, HSN summary
   and warnings without writing anything. Both the invoice form and the voice
