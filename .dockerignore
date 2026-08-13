@@ -1,0 +1,22 @@
+# Keep the build context small and make sure nothing local leaks into an image.
+node_modules
+dist
+.git
+.github
+.claude
+
+# Secrets. These must come from the platform's environment settings, never
+# from a file baked into an image — an image layer is readable by anyone who
+# can pull it.
+.env
+.env.*
+!.env.example
+
+# The frontend is deployed separately as static files.
+web
+
+# Not needed at runtime.
+docs
+*.log
+coverage
+README.md

@@ -1,0 +1,16 @@
+{
+  // The production build. Same compiler settings as tsconfig.json; the only
+  // difference is what gets emitted.
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "dist",
+    // Tests must be typechecked but never shipped. `test-support/db.ts`
+    // exports `resetDatabase()`, which TRUNCATEs every table in the schema —
+    // that is exactly right in a test harness and catastrophic in a
+    // production bundle, so it does not get to exist there.
+    "src/**/*.test.ts",
+    "src/**/*.itest.ts",
+    "src/test-support/**"
+  ]
+}

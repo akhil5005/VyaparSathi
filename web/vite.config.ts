@@ -20,6 +20,15 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    /**
+     * Sourcemaps in production, deliberately.
+     *
+     * They are normally left off to avoid publishing readable source — but this
+     * repository is public, so they reveal nothing that a `git clone` does not,
+     * and they turn a minified stack trace from a real counter into something
+     * diagnosable. Browsers only fetch a `.map` when devtools are open, so the
+     * cost to an ordinary page load is nil.
+     */
     sourcemap: true,
   },
 });

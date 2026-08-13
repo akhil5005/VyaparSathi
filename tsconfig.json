@@ -17,6 +17,10 @@
     "sourceMap": true,
     "declaration": false
   },
+  // Everything, including tests — this config is what `npm run typecheck` uses,
+  // and a test that no longer compiles is a broken test.
+  //
+  // The production build uses tsconfig.build.json instead, which excludes them.
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

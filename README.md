@@ -800,9 +800,11 @@ authentication and the dashboard.
 **Nothing is deployed yet**, which is the largest remaining gap: all of the
 above runs on a laptop. What remains:
 
-1. **Deploy it.** A managed Postgres, the API hosted, the frontend on a static
-   host, DNS across the two subdomains. Until this happens the shop cannot use
-   any of it.
+1. **Deploy it.** Everything the repository can provide is in place — a
+   `Dockerfile`, migrations that run on boot, a `/health` check, the SPA
+   rewrite, and production env templates. What remains is account-level and
+   cannot be scripted: create the hosts, point DNS, paste the secrets. Step by
+   step in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 2. **Password reset delivery.** `auth.controller.ts` logs the reset link to the
    server console behind a TODO. Someone who clicks "forgot password" currently
    receives nothing; this needs real SMS or WhatsApp before the app is exposed
