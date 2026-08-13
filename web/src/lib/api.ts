@@ -18,13 +18,20 @@
  *     refreshes would log the user out.
  */
 
+/**
+ * Where the API lives.
+ *
+ * Empty means **same origin** — the API is serving this bundle itself, so
+ * `/api/...` resolves against wherever the page was loaded from. That is the
+ * default deployment: one service, no CORS, and the refresh cookie is never a
+ * third-party cookie.
+ *
+ * Set `VITE_API_URL` only when the two are genuinely split across hosts, which
+ * is how development runs (Vite on :5173, API on :4000) and how a two-subdomain
+ * deployment would work. It is read at *build* time — Vite substitutes it into
+ * the bundle — so changing it means rebuilding.
+ */
 export const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '');
-
-if (!API_URL && import.meta.env.PROD) {
-  // Better a loud failure at startup than every request quietly hitting the
-  // app's own origin and 404ing.
-  throw new Error('VITE_API_URL is not set. The app cannot reach the API.');
-}
 
 export interface ApiErrorBody {
   error: {
@@ -156,7 +163,11 @@ export interface RequestOptions {
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
-  const url = new URL(`${API_URL}${path}`);
+  // `new URL('/api/x')` throws without a base, so same-origin (empty API_URL)
+  // needs the page's own origin supplying explicitly.
+  const url = API_URL
+    ? new URL(`${API_URL}${path}`)
+    : new URL(path, window.location.origin);
   for (const [key, value] of Object.entries(query ?? {})) {
     if (value === undefined || value === null || value === '') continue;
     url.searchParams.set(key, String(value));

@@ -1,13 +1,14 @@
-# Vyapar Sathi API.
+# Vyapar Sathi — API and web app in one image, served from one origin.
 #
-# Single stage on purpose. A multi-stage build would shave a couple of hundred
-# megabytes, but `npm start` runs `prisma migrate deploy` before booting, which
-# needs the Prisma CLI — a dev dependency. Splitting stages to drop dev deps and
-# then copying the CLI back in is more moving parts than the saving is worth for
-# one small service.
+# Single origin on purpose. Split across two hosts (`x.onrender.com` and
+# `y.pages.dev`) the refresh cookie becomes a genuine third-party cookie, which
+# Safari blocks by default and Chrome is phasing out — login would work on a
+# laptop and fail on a phone. Serving both from one process sidesteps that, and
+# costs one service instead of two.
 #
-# The frontend is NOT in this image. It builds to static files and goes to a
-# static host; see docs/DEPLOYMENT.md.
+# To split them later (two subdomains of one domain), build the frontend with
+# VITE_API_URL set and deploy `web/dist` separately; the server only serves the
+# app when `web/dist` is present, so it needs no change.
 
 FROM node:22-slim AS runtime
 
@@ -19,25 +20,34 @@ RUN apt-get update -y \
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Dependencies first, so a code-only change reuses this layer.
-# `npm ci` respects the lockfile exactly. --include=dev because the build needs
-# TypeScript and the start command needs the Prisma CLI.
+# ---- Dependencies -----------------------------------------------------------
+# Copied first so a code-only change reuses these layers.
+# `--include=dev` because the build needs TypeScript and Vite, and the start
+# command needs the Prisma CLI for `migrate deploy`.
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
 
-# The schema must be present before `prisma generate`, which `npm run build`
-# calls, and again at runtime for `migrate deploy`.
+COPY web/package.json web/package-lock.json ./web/
+RUN npm --prefix web ci
+
+# ---- Build the web app ------------------------------------------------------
+# No VITE_API_URL: empty means same origin, which is the point of this image.
+COPY web ./web
+RUN npm --prefix web run build
+
+# ---- Build the API ----------------------------------------------------------
+# The schema is needed here for `prisma generate`, and again at runtime for
+# `migrate deploy`.
 COPY prisma ./prisma
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
-
 RUN npm run build
 
 # Documentation only — the platform maps its own port. server.ts reads PORT.
 EXPOSE 4000
 
 # Applies any pending migration, then boots. Running migrations here rather
-# than in a separate release step keeps a deploy atomic from the operator's
-# point of view: if the migration fails, the container does not start and the
+# than as a separate release step keeps a deploy atomic from the operator's
+# point of view: a failed migration means the container never starts, and the
 # previous one keeps serving.
 CMD ["npm", "start"]

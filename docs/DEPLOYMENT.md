@@ -1,173 +1,148 @@
 # Deployment
 
-Two pieces on two subdomains of one domain:
+**One service, one origin.** The Docker image builds the web app and the API
+together, and Express serves the built frontend alongside `/api/*`.
 
-| | Host | Address |
+Why not two hosts. `something.onrender.com` and `something.pages.dev` are
+different *registrable domains*, which makes the refresh cookie a genuine
+third-party cookie — Safari blocks those by default and Chrome is phasing them
+out. Login would work on a laptop and fail on a phone. One origin removes the
+problem rather than working around it, needs no CORS in production, and costs
+one service instead of two.
+
+If you later get a domain, splitting is easy: build the frontend with
+`VITE_API_URL=https://api.yourdomain` and deploy `web/dist` separately. The
+server only serves the app when `web/dist` exists, so it needs no change. Two
+subdomains of one domain are cross-origin but *same-site*, so the cookie stays
+`SameSite=Lax`.
+
+| | Service | Free? |
 |---|---|---|
-| API | Railway (or Render / Fly) | `api.yourname.me` |
-| Web app | Cloudflare Pages (or Vercel / Netlify) | `app.yourname.me` |
-| Database | Managed Postgres on the API's host | not public |
+| App + API | Render Web Service (Docker) | Yes — but sleeps after ~15 min idle |
+| Database | Neon Postgres | Yes, and persistent |
 
-**Why two subdomains rather than two unrelated hosts.** Subdomains of one
-registrable domain are cross-*origin* but same-*site*. That means CORS is
-genuinely exercised — and the refresh cookie stays `SameSite=Lax` instead of
-becoming a third-party cookie, which Safari blocks by default. Splitting across
-`something.vercel.app` and `something.railway.app` would force `SameSite=None`
-and give you an auth flow that fails on iPhone.
+**The sleep matters.** A free Render service takes 30–60 seconds to wake. Fine
+for a demo; unusable at a counter, where the operator would press "New bill" and
+stare at nothing. Upgrade to a paid instance the week the shop starts relying on
+it. *(Check current pricing — it moves.)*
 
 ---
 
-## Before you start
+## 1. Database — Neon (~5 min)
 
-- A domain. A `.me` is free for a year with the [GitHub Student Developer
-  Pack](https://education.github.com/pack) via Namecheap.
-- Accounts on the two hosts. Both have free tiers that fit this.
-- Nothing else. No credit card is needed for the free tiers, though Railway
-  asks for one to lift its trial limits.
+[neon.tech](https://neon.tech) → sign in with GitHub → **New Project** →
+region **Singapore** (closest to Punjab).
 
----
+Copy the connection string:
 
-## 1. Database
+```
+postgresql://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+```
 
-Create a managed Postgres on the same host as the API — same region, so the
-query round trip stays under a millisecond.
+That is a real secret. It goes into Render's environment settings and nowhere
+else.
 
-On Railway: **New → Database → PostgreSQL**. It injects `DATABASE_URL` into
-services in the same project automatically; check whether it has before setting
-it by hand.
-
-**Turn on automated backups now, not later.** These are a business's books. A
-daily snapshot with 7-day retention is the minimum; also see
-[Backups](#4-backups) below for the off-host copy that matters more.
+Neon's free tier keeps a 7-day history you can restore from. That is a floor,
+not a backup strategy — see [Backups](#4-backups).
 
 ---
 
-## 2. API
+## 2. App + API — Render (~15 min)
 
-Point the host at this repository. The `Dockerfile` at the root is picked up
-automatically by Railway, Render and Fly.
+[render.com](https://render.com) → **New → Web Service** → connect GitHub →
+pick **VyaparSathi**.
 
-**Environment variables** — copy from `.env.production.example`. The two that
-must be generated fresh:
+| Field | Value |
+|---|---|
+| Language | **Docker** (it finds the `Dockerfile`) |
+| Region | Singapore |
+| Health check path | `/health` |
+
+**Environment variables:**
+
+```
+NODE_ENV            production
+DATABASE_URL        <the Neon string>
+JWT_ACCESS_SECRET   <generate>
+JWT_REFRESH_SECRET  <generate>
+```
+
+Generate the secrets by running this **twice**, using a different output for
+each — they must differ from one another and from your development values:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 ```
 
-Run it twice. `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` must differ from each
-other and from your development values.
+`APP_URL` is **not needed** in a single-origin deployment. CORS never engages,
+because the browser is talking to the origin it loaded from. Leave it unset.
 
-`APP_URL` must be the exact frontend origin — `https://app.yourname.me`, no
-trailing slash. A mismatch here produces a CORS failure that reads as a
-mysterious network error in the browser.
+The first build takes several minutes — it installs both dependency trees and
+builds both halves. Watch the log for `prisma migrate deploy` creating the
+tables, then `Vyapar Sathi API listening`.
 
-**Migrations run themselves.** `npm start` executes `prisma migrate deploy`
-before booting, so a deploy is atomic from your point of view: if the migration
-fails the container never starts and the previous one keeps serving.
-
-**Health check**: `GET /health` returns `{"status":"ok"}`. Point the platform's
-health check at it so a failed boot rolls back instead of serving errors.
-
-### Custom domain
-
-Add `api.yourname.me` in the host's domain settings. It will give you a CNAME
-target; add that at your registrar:
-
-```
-CNAME   api   <target the host gives you>
-```
-
-HTTPS certificates are issued automatically once DNS resolves. Give it a few
-minutes.
+Then open `https://<your-service>.onrender.com`. The app itself should load, not
+JSON.
 
 ---
 
-## 3. Web app
+## 3. First run
 
-The frontend is static — built once, served from a CDN. No Node process.
-
-| Setting | Value |
-|---|---|
-| Root directory | `web` |
-| Build command | `npm ci && npm run build` |
-| Output directory | `web/dist` |
-| Environment variable | `VITE_API_URL=https://api.yourname.me` |
-
-`VITE_API_URL` is read **at build time**, not runtime — Vite substitutes it into
-the bundle. Change it and you must rebuild; setting it after a build has no
-effect.
-
-**Single-page app routing.** The router owns paths like `/billing` and
-`/invoices`, but a static host looks for a file at that path and returns 404 on
-a hard refresh. Every host needs a rewrite to `index.html`:
-
-- **Cloudflare Pages** — add `web/public/_redirects` containing `/* /index.html 200`
-- **Netlify** — the same `_redirects` file
-- **Vercel** — detected automatically for Vite projects
-
-This repository ships the `_redirects` file, so Cloudflare and Netlify work
-without further configuration.
-
-Then add `app.yourname.me` as a custom domain, with the CNAME the host gives you.
+1. **Register a new shop** — use the firm's **real GSTIN**; the checksum is
+   validated. This creates the firm, the owner account, the unit master and the
+   invoice number sequences in one transaction.
+2. Seed the HSN codes at 18%, run locally against production:
+   ```bash
+   DATABASE_URL="<neon string>" npm run db:seed
+   ```
+3. **Do not run `db:seed:catalogue`.** Those rates are invented sample data.
+4. Enter the real product range with real rates, then opening balances and
+   opening stock as at the switchover date.
 
 ---
 
 ## 4. Backups
 
-The platform's daily snapshot protects against the platform losing your data. It
-does not protect against you, or a bug, deleting rows — and it lives with the
-same provider. Keep a copy somewhere else:
+Neon's history protects against Neon losing data. It does not protect against a
+bad delete, and it lives with the same provider. Keep a copy elsewhere:
 
 ```bash
 pg_dump "$DATABASE_URL" --no-owner --format=custom > vyapar-$(date +%F).dump
 ```
 
-Run it on a schedule and put the file somewhere off-host. Verify a restore works
-at least once; a backup nobody has restored is a hypothesis.
+Run it on a schedule; put the file somewhere else entirely. Restore it once to
+prove it works — a backup nobody has restored is a hypothesis.
 
 ---
 
-## 5. First run
-
-1. Open `https://app.yourname.me` and register the shop. This creates the firm,
-   the owner account, the unit master and the invoice number sequences in one
-   transaction — use the firm's **real GSTIN**, the checksum is validated.
-2. Seed the HSN codes:
-   ```bash
-   npm run db:seed        # with DATABASE_URL pointing at production
-   ```
-   Skip `db:seed:catalogue` — those rates are invented sample data.
-3. Enter the real product range, with real rates.
-4. Enter opening balances and opening stock as at the switchover date.
-
----
-
-## Still to do before real customers
+## Still missing before real customers
 
 - **Password reset delivery.** `auth.controller.ts` logs the reset link to the
   server console behind a `TODO`. Someone clicking "forgot password" in
-  production currently receives nothing. Wire up SMS or WhatsApp before relying
-  on it.
-- **Error monitoring.** Nothing reports a 500 to you. Sentry's free tier covers
-  this in about ten lines.
+  production receives nothing.
+- **Error monitoring.** Nothing reports a 500. Sentry's free tier is about ten
+  lines.
 
 ---
 
 ## Troubleshooting
 
-**CORS errors in the browser console.** `APP_URL` on the API must exactly match
-the frontend origin — scheme, host, no trailing slash, no path. Confirm what the
-API thinks it allows by checking the `Access-Control-Allow-Origin` header on any
-response.
+**The root URL returns JSON instead of the app.** `web/dist` was not built into
+the image. Check the build log for the Vite step; if the frontend build failed,
+the server falls back to API-only and the SPA routes 404.
+
+**404 on refreshing `/billing`.** Same cause as above — the catch-all that
+serves `index.html` only registers when `web/dist/index.html` exists.
 
 **Logged out on every page load.** The refresh cookie is `Secure` in production,
-so it is only sent over HTTPS. If the site is reachable over plain HTTP, fix
-that first.
+so it needs HTTPS. Render provides that; if you are testing over plain HTTP
+somewhere else, that is why.
 
-**404 on refreshing `/billing`.** The SPA rewrite is missing — see the web app
-section above.
+**`prisma migrate deploy` fails on boot.** The container log names the migration
+and the failing SQL. A database that already has tables from a manual `db push`
+is the usual cause; a fresh Neon branch is the quickest fix while there is no
+real data to lose.
 
-**`prisma migrate deploy` fails on boot.** Read the container log: it names the
-migration and the SQL that failed. The database may already have tables from a
-manual `db push`; a fresh database is the quickest fix while there is no real
-data to lose.
+**Deploy succeeds but the app shows an old version.** `index.html` is served
+`no-store` and the hashed assets are immutable, so this should not happen — if
+it does, it is a CDN or proxy in front of Render, not the app.
