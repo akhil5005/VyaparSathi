@@ -9,6 +9,9 @@ import { Button } from '../../components/Button';
 import { ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { NewProductDialog } from './NewProductDialog';
+import { Link } from 'react-router-dom';
+import { Alert } from '../../components/Alert';
+import type { HsnCode } from '../../lib/types';
 import { ProductDetailDialog } from './ProductDetailDialog';
 
 /**
@@ -30,6 +33,17 @@ export function ProductsPage() {
   const [openProductId, setOpenProductId] = useState<string | null>(null);
 
   const debouncedSearch = useDebounced(search);
+
+  /**
+   * A product cannot exist without an HSN code, and a freshly registered shop
+   * has none — so "New product" leads to a form that cannot be completed.
+   * Better to say so here than to let someone find out inside the dialog.
+   */
+  const hsn = useQuery({
+    queryKey: ['hsn'],
+    queryFn: () => api.get<{ hsnCodes: HsnCode[] }>('/api/masters/hsn'),
+  });
+  const noHsnYet = !hsn.isLoading && (hsn.data?.hsnCodes.length ?? 0) === 0;
 
   const products = useQuery({
     queryKey: ['products', 'list', debouncedSearch, lowStockOnly],
@@ -59,11 +73,22 @@ export function ProductsPage() {
           </p>
         </div>
         {canEdit ? (
-          <Button size="lg" onClick={() => setCreating(true)}>
+          <Button size="lg" onClick={() => setCreating(true)} disabled={noHsnYet}>
             New product
           </Button>
         ) : null}
       </header>
+
+      {noHsnYet && canEdit ? (
+        <Alert tone="warning" title="Set up GST rates first">
+          Every product needs an HSN code — it is what decides the GST on a bill, and none are set
+          up yet. Add one under{' '}
+          <Link to="/settings" className="font-medium underline underline-offset-2">
+            Settings → GST rates
+          </Link>
+          , then come back.
+        </Alert>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <input

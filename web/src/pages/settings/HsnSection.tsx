@@ -20,6 +20,7 @@ import { Spinner } from '../../components/Spinner';
  */
 export function HsnSection() {
   const [changingRate, setChangingRate] = useState<HsnCode | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const hsn = useQuery({
     queryKey: ['hsn'],
@@ -31,10 +32,13 @@ export function HsnSection() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-slate-500">
-        The rate charged on each kind of paper. Changing one adds a new rate from a date — old
-        invoices keep the rate they were issued at.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-xl text-sm text-slate-500">
+          The rate charged on each kind of paper. Changing one adds a new rate from a date — old
+          invoices keep the rate they were issued at.
+        </p>
+        <Button onClick={() => setAdding(true)}>Add HSN code</Button>
+      </div>
 
       {missingRate.length > 0 ? (
         <Alert tone="warning" title="No rate in force">
@@ -50,6 +54,17 @@ export function HsnSection() {
         </div>
       ) : hsn.error ? (
         <ErrorAlert error={hsn.error} />
+      ) : rows.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 py-12 text-center dark:border-slate-700">
+          <p className="text-sm text-slate-500">No HSN codes yet.</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-slate-400">
+            Every product needs one — it is what decides the GST rate on a bill. Paper is
+            Chapter 48: 4802 for copier and writing paper, 4810 for coated, 4820 for registers.
+          </p>
+          <div className="mt-4">
+            <Button onClick={() => setAdding(true)}>Add the first one</Button>
+          </div>
+        </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <table className="w-full text-sm">
@@ -99,6 +114,8 @@ export function HsnSection() {
           </table>
         </div>
       )}
+
+      {adding ? <AddHsnDialog onClose={() => setAdding(false)} /> : null}
 
       {changingRate ? (
         <ChangeRateDialog hsn={changingRate} onClose={() => setChangingRate(null)} />
@@ -227,4 +244,176 @@ function ChangeRateDialog({ hsn, onClose }: { hsn: HsnCode; onClose: () => void 
       </form>
     </Dialog>
   );
+}
+
+/// The paper trade's chapter, offered as one-click starting points. Typing
+/// "4802" from memory is fine; picking it from a list nobody has to remember
+/// is better, and the description is what appears in the product form.
+const COMMON_PAPER_HSN: { code: string; description: string }[] = [
+  { code: '4802', description: 'Uncoated paper for writing/printing (A4, copier, printing paper)' },
+  { code: '4801', description: 'Newsprint, in rolls or sheets' },
+  { code: '4805', description: 'Other uncoated paper and paperboard' },
+  { code: '4810', description: 'Coated paper and paperboard (art paper, chromo)' },
+  { code: '4817', description: 'Envelopes, letter cards, plain postcards' },
+  { code: '4820', description: 'Registers, notebooks, letter pads, files' },
+  { code: '4823', description: 'Other paper cut to size (tissue, wrapping)' },
+];
+
+/**
+ * Adding an HSN code, with its first rate.
+ *
+ * Both in one step deliberately. An HSN with no rate in force cannot be billed
+ * against, so creating one without a rate produces a product that looks fine
+ * until someone tries to sell it — a failure discovered at the counter with a
+ * customer waiting.
+ */
+function AddHsnDialog({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+
+  const [code, setCode] = useState('');
+  const [description, setDescription] = useState('');
+  const [gstRate, setGstRate] = useState('18');
+  // Backdated to the start of the current financial year so an invoice entered
+  // late — for a sale that happened in April — still finds a rate.
+  const [effectiveFrom, setEffectiveFrom] = useState(financialYearStart());
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post('/api/masters/hsn', {
+        code: code.trim(),
+        description: description.trim(),
+        gstRate,
+        effectiveFrom,
+      }),
+    onSuccess() {
+      void queryClient.invalidateQueries({ queryKey: ['hsn'] });
+      onClose();
+    },
+  });
+
+  const fieldErrors = create.error instanceof ApiError ? create.error.fieldErrors : {};
+  const rate = Number(gstRate);
+  const ready =
+    /^\d{4,8}$/.test(code.trim()) &&
+    description.trim().length >= 2 &&
+    gstRate !== '' &&
+    rate >= 0 &&
+    rate <= 100 &&
+    !create.isPending;
+
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (ready) create.mutate();
+  }
+
+  const unused = COMMON_PAPER_HSN.filter((h) => h.code !== code.trim());
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Add HSN code"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={onSubmit} loading={create.isPending} disabled={!ready}>
+            Add
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
+        <ErrorAlert error={create.error} />
+
+        <div>
+          <p className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+            Common for paper
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {unused.map((option) => (
+              <button
+                key={option.code}
+                type="button"
+                onClick={() => {
+                  setCode(option.code);
+                  setDescription(option.description);
+                }}
+                className="rounded-lg border border-slate-300 px-2.5 py-1 font-mono text-sm text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                {option.code}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            Tap one to fill it in, or type any code below.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-[1fr_2fr]">
+          <Field
+            label="Code"
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+            error={fieldErrors['code']}
+            inputMode="numeric"
+            hint="4 to 8 digits"
+            className="font-mono"
+            required
+            autoFocus
+            placeholder="4802"
+          />
+          <Field
+            label="What it covers"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            error={fieldErrors['description']}
+            hint="Shown when picking an HSN for a product"
+            required
+            placeholder="Uncoated paper for writing/printing"
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="GST rate"
+            value={gstRate}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === '' || /^\d*\.?\d*$/.test(v)) setGstRate(v);
+            }}
+            error={fieldErrors['gstRate']}
+            inputMode="decimal"
+            hint="Combined — split 50/50 into CGST and SGST"
+            className="tabular"
+            required
+          />
+          <Field
+            label="Applies from"
+            type="date"
+            value={effectiveFrom}
+            onChange={(e) => setEffectiveFrom(e.target.value)}
+            error={fieldErrors['effectiveFrom']}
+            hint="Backdated to this financial year"
+            required
+          />
+        </div>
+
+        <Alert tone="info">
+          Confirm the rate with your accountant before billing. An HSN with no rate in force
+          cannot be sold against at all, so the rate is set here rather than left for later.
+        </Alert>
+
+        <button type="submit" className="hidden" aria-hidden tabIndex={-1} />
+      </form>
+    </Dialog>
+  );
+}
+
+/// 1 April of the current Indian financial year, as a yyyy-mm-dd input value.
+function financialYearStart(): string {
+  const now = new Date();
+  const year = now.getMonth() + 1 >= 4 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${year}-04-01`;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { reamWeightKg } from './paperWeight';
@@ -155,6 +156,16 @@ export function NewProductDialog({
             onChange={setHsnCodeId}
             error={fieldErrors['hsnCodeId']}
             hint="Decides the GST rate"
+            loading={hsn.isLoading}
+            emptyMessage={
+              <>
+                No HSN codes yet — add one under{' '}
+                <Link to="/settings" className="font-medium underline underline-offset-2">
+                  Settings → GST rates
+                </Link>
+                . A product cannot be billed without one.
+              </>
+            }
             options={(hsn.data?.hsnCodes ?? []).map((h) => ({
               value: h.id,
               label: `${h.code} — ${h.description}`,
@@ -166,6 +177,7 @@ export function NewProductDialog({
             onChange={setBaseUnitId}
             error={fieldErrors['baseUnitId']}
             hint="Stock is held in this unit"
+            loading={units.isLoading}
             options={(units.data?.units ?? []).map((u) => ({
               value: u.id,
               label: `${u.name} (${u.symbol})`,
@@ -285,6 +297,15 @@ export function NewProductDialog({
   );
 }
 
+/**
+ * A required dropdown that tells the truth about why it is empty.
+ *
+ * The first version printed "Loading…" whenever the option list was empty,
+ * which conflates two completely different situations. On a freshly registered
+ * shop there are no HSN codes yet, so it sat there saying "Loading…" for ever
+ * with no hint that the fix is to go and add one — the worst possible first
+ * five minutes with the software.
+ */
 function Select({
   label,
   value,
@@ -292,14 +313,21 @@ function Select({
   options,
   hint,
   error,
+  loading = false,
+  emptyMessage,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
-  hint?: string;
+  hint?: React.ReactNode;
   error?: string;
+  loading?: boolean;
+  /// Shown instead of the hint when the list has loaded and is genuinely empty.
+  emptyMessage?: React.ReactNode;
 }) {
+  const empty = !loading && options.length === 0;
+
   return (
     <label className="block">
       <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -307,10 +335,12 @@ function Select({
       </span>
       <select
         value={value}
+        disabled={loading || empty}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-slate-700"
+        className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:focus:ring-slate-700 dark:disabled:bg-slate-800"
       >
-        {options.length === 0 ? <option value="">Loading…</option> : null}
+        {loading ? <option value="">Loading…</option> : null}
+        {empty ? <option value="">None set up yet</option> : null}
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -319,6 +349,10 @@ function Select({
       </select>
       {error ? (
         <span className="mt-1.5 block text-sm text-rose-600">{error}</span>
+      ) : empty && emptyMessage ? (
+        <span className="mt-1.5 block text-sm text-amber-600 dark:text-amber-400">
+          {emptyMessage}
+        </span>
       ) : hint ? (
         <span className="mt-1.5 block text-sm text-slate-500">{hint}</span>
       ) : null}
