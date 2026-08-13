@@ -1,6 +1,12 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, CAN_BILL, CAN_EDIT_MASTERS, CAN_RECEIVE_PAYMENT } from './auth/AuthProvider';
+import {
+  AuthProvider,
+  CAN_BILL,
+  CAN_EDIT_MASTERS,
+  CAN_FILE_RETURNS,
+  CAN_RECEIVE_PAYMENT,
+} from './auth/AuthProvider';
 import { RequireAuth, RequireRole } from './auth/RequireAuth';
 import { LoginPage } from './auth/LoginPage';
 import { SignupPage } from './auth/SignupPage';
@@ -16,6 +22,7 @@ import { InvoicesPage } from './pages/invoices/InvoicesPage';
 import { PartiesPage } from './pages/parties/PartiesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { NotesPage } from './pages/notes/NotesPage';
+import { Gstr1Page } from './pages/returns/Gstr1Page';
 import { ApiError } from './lib/api';
 
 const queryClient = new QueryClient({
@@ -66,6 +73,10 @@ export default function App() {
 
                 <Route element={<RequireRole allow={CAN_RECEIVE_PAYMENT} />}>
                   <Route path="payments" element={<PaymentsPage />} />
+                </Route>
+
+                <Route element={<RequireRole allow={CAN_FILE_RETURNS} />}>
+                  <Route path="gstr1" element={<Gstr1Page />} />
                 </Route>
 
                 <Route element={<RequireRole allow={CAN_EDIT_MASTERS} />}>

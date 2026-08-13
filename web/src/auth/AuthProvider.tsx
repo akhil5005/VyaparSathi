@@ -188,3 +188,4 @@ export const CAN_EDIT_MASTERS: UserRole[] = ['OWNER', 'MANAGER'];
 export const CAN_BILL: UserRole[] = ['OWNER', 'MANAGER', 'BILLING_STAFF'];
 export const CAN_RECEIVE_PAYMENT: UserRole[] = ['OWNER', 'MANAGER', 'BILLING_STAFF', 'ACCOUNTANT'];
 export const CAN_SEE_COST: UserRole[] = ['OWNER', 'MANAGER', 'ACCOUNTANT'];
+export const CAN_FILE_RETURNS: UserRole[] = ['OWNER', 'MANAGER', 'ACCOUNTANT'];

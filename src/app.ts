@@ -16,6 +16,7 @@ import { paymentRouter } from './modules/payments/payment.routes.js';
 import { purchaseRouter } from './modules/purchases/purchase.routes.js';
 import { noteRouter } from './modules/notes/creditNote.routes.js';
 import { printRouter } from './modules/printing/print.routes.js';
+import { gstr1Router } from './modules/gstr1/gstr1.routes.js';
 
 export interface AppOptions {
   /**
@@ -118,6 +119,7 @@ export function createApp(options: AppOptions = {}) {
   app.use('/api/payments', paymentRouter);
   app.use('/api/notes', noteRouter);
   app.use('/api/printing', printRouter);
+  app.use('/api/gstr1', gstr1Router);
 
   if (serveWebApp) {
     /**

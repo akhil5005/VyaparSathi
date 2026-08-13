@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
-import { CAN_EDIT_MASTERS, CAN_RECEIVE_PAYMENT, useAuth } from '../auth/AuthProvider';
+import {
+  CAN_EDIT_MASTERS,
+  CAN_FILE_RETURNS,
+  CAN_RECEIVE_PAYMENT,
+  useAuth,
+} from '../auth/AuthProvider';
 import { roleLabel } from '../auth/RequireAuth';
 import type { UserRole } from '../lib/types';
 import { Button } from './Button';
@@ -27,6 +32,7 @@ const NAV: NavItem[] = [
   { to: '/credit-notes', label: 'Credit notes', allow: CAN_EDIT_MASTERS },
   { to: '/purchases', label: 'Purchases', allow: CAN_EDIT_MASTERS },
   { to: '/payments', label: 'Payments & udhaar', allow: CAN_RECEIVE_PAYMENT },
+  { to: '/gstr1', label: 'GSTR-1', allow: CAN_FILE_RETURNS },
   { to: '/settings', label: 'Settings', allow: CAN_EDIT_MASTERS },
 ];
 

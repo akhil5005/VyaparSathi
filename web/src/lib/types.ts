@@ -810,3 +810,40 @@ export interface CreateInvoiceResponse {
   invoice: SalesInvoice;
   warnings?: IssueWarning[];
 }
+
+// ---------------------------------------------------------------------------
+// GST returns
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /api/gstr1/summary` — the readable half of a GSTR-1.
+ *
+ * Deliberately mirrors the server's `Gstr1Summary`: money stays a string, and
+ * the browser does no arithmetic on it. The portal JSON, which is the only
+ * place amounts become numbers, is never parsed here — it is downloaded as a
+ * file and handed to the CA.
+ */
+export interface Gstr1Summary {
+  period: string;
+  periodLabel: string;
+  gstin: string;
+  counts: {
+    b2bInvoices: number;
+    b2bCounterparties: number;
+    b2clInvoices: number;
+    b2csRows: number;
+    creditNotes: number;
+    debitNotes: number;
+    hsnRows: number;
+    cancelledInvoices: number;
+  };
+  totals: {
+    taxableValue: string;
+    cgst: string;
+    sgst: string;
+    igst: string;
+    cess: string;
+    invoiceValue: string;
+  };
+  warnings: { code: string; message: string }[];
+}

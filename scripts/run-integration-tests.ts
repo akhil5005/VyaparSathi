@@ -112,7 +112,9 @@ async function main() {
         // Serial: the tests share one database and truncate between cases, so
         // running files in parallel would have them wiping each other's rows.
         '--test-concurrency=1',
-        'src/**/*.itest.ts',
+        // Narrow to one module while working on it:
+        //   ITEST_PATTERN="src/modules/gstr1/*.itest.ts" npm run test:integration
+        process.env.ITEST_PATTERN ?? 'src/**/*.itest.ts',
       ],
       childEnv,
     );

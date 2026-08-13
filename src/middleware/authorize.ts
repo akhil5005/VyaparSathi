@@ -25,3 +25,5 @@ export const CAN_RECEIVE_PAYMENT: UserRole[] = ['OWNER', 'MANAGER', 'BILLING_STA
 export const CAN_VIEW: UserRole[] = ['OWNER', 'MANAGER', 'BILLING_STAFF', 'ACCOUNTANT', 'VIEWER'];
 /// Cost price and margin are owner-and-manager information.
 export const CAN_SEE_COST: UserRole[] = ['OWNER', 'MANAGER', 'ACCOUNTANT'];
+/// GST returns. A counter clerk has no business exporting the sales register.
+export const CAN_FILE_RETURNS: UserRole[] = ['OWNER', 'MANAGER', 'ACCOUNTANT'];
