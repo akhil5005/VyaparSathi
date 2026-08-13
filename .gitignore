@@ -1,0 +1,21 @@
+node_modules/
+dist/
+
+# Secrets. The two example files are committed; nothing else matching .env.* is.
+.env
+.env.*
+!.env.example
+!.env.production.example
+# The frontend's dev config holds only localhost URLs, and committing it is what
+# makes clone-and-run work. Vite only exposes VITE_-prefixed variables to the
+# bundle, so nothing secret can hide here anyway.
+!web/.env.development
+
+*.log
+.DS_Store
+coverage/
+prisma/*.db
+
+# Machine-local tool state. `.local` is the convention for "not shared" —
+# it holds one developer's approved-command list, which is noise to everyone else.
+.claude/settings.local.json

@@ -1,0 +1,204 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api';
+import { formatDate, formatMoney } from '../../lib/money';
+import type {
+  ChequeListResponse,
+  OutstandingResponse,
+  PaymentListResponse,
+} from '../../lib/types';
+import { Button } from '../../components/Button';
+import { ErrorAlert } from '../../components/Alert';
+import { Spinner } from '../../components/Spinner';
+import { RecordPaymentDialog } from './RecordPaymentDialog';
+import { OutstandingTable } from './OutstandingTable';
+import { ChequeList } from './ChequeList';
+import { PaymentList } from './PaymentList';
+
+/**
+ * Money coming in, and who still owes it.
+ *
+ * Three views of the same question, because a shopkeeper asks it three ways:
+ * *who owes me* (the udhaar report, the reason this screen exists), *what came
+ * in today* (the payment list), and *which cheques can I bank* (the cheque
+ * list, where a post-dated cheque sits until its date arrives).
+ */
+
+type Tab = 'outstanding' | 'payments' | 'cheques';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'outstanding', label: 'Who owes (udhaar)' },
+  { id: 'payments', label: 'Payments received' },
+  { id: 'cheques', label: 'Cheques' },
+];
+
+export function PaymentsPage() {
+  const [tab, setTab] = useState<Tab>('outstanding');
+  const [recording, setRecording] = useState<{ partyId?: string; partyName?: string } | null>(
+    null,
+  );
+
+  const outstanding = useQuery({
+    queryKey: ['outstanding'],
+    queryFn: () => api.get<OutstandingResponse>('/api/payments/outstanding'),
+  });
+
+  const payments = useQuery({
+    queryKey: ['payments', 'list'],
+    queryFn: () => api.get<PaymentListResponse>('/api/payments', { query: { pageSize: 50 } }),
+    enabled: tab === 'payments',
+  });
+
+  const cheques = useQuery({
+    queryKey: ['cheques', 'list'],
+    queryFn: () => api.get<ChequeListResponse>('/api/payments/cheques', { query: { pageSize: 50 } }),
+    enabled: tab === 'cheques',
+  });
+
+  const total = outstanding.data?.grandTotal;
+
+  return (
+    <div className="space-y-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            Payments &amp; udhaar
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Record money coming in, and see who still owes.
+          </p>
+        </div>
+        <Button size="lg" onClick={() => setRecording({})}>
+          Record payment
+        </Button>
+      </header>
+
+      {/* The ageing summary, always visible — it is the number he cares about. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Bucket label="Total owed" value={total?.total} tone="total" loading={outstanding.isLoading} />
+        <Bucket label="0–30 days" value={total?.current} loading={outstanding.isLoading} />
+        <Bucket label="31–60 days" value={total?.days31to60} loading={outstanding.isLoading} />
+        <Bucket label="61–90 days" value={total?.days61to90} tone="warn" loading={outstanding.isLoading} />
+        <Bucket label="Over 90 days" value={total?.over90} tone="bad" loading={outstanding.isLoading} />
+      </div>
+
+      <nav className="flex gap-1 border-b border-slate-200 dark:border-slate-800" role="tablist">
+        {TABS.map(({ id, label }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={[
+              '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition',
+              tab === id
+                ? 'border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100'
+                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200',
+            ].join(' ')}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {tab === 'outstanding' ? (
+        <Section query={outstanding}>
+          <OutstandingTable
+            parties={outstanding.data?.parties ?? []}
+            asOf={outstanding.data?.asOf}
+            onCollect={(party) =>
+              setRecording({ partyId: party.partyId, partyName: party.partyName })
+            }
+          />
+        </Section>
+      ) : null}
+
+      {tab === 'payments' ? (
+        <Section query={payments}>
+          <PaymentList
+            payments={payments.data?.payments ?? []}
+            totalAmount={payments.data?.totalAmount}
+            totalOnAccount={payments.data?.totalOnAccount}
+          />
+        </Section>
+      ) : null}
+
+      {tab === 'cheques' ? (
+        <Section query={cheques}>
+          <ChequeList cheques={cheques.data?.cheques ?? []} />
+        </Section>
+      ) : null}
+
+      {recording ? (
+        <RecordPaymentDialog
+          presetPartyId={recording.partyId}
+          presetPartyName={recording.partyName}
+          onClose={() => setRecording(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function Section({
+  query,
+  children,
+}: {
+  query: { isLoading: boolean; error: unknown };
+  children: React.ReactNode;
+}) {
+  if (query.isLoading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner className="h-6 w-6 text-slate-400" />
+      </div>
+    );
+  }
+  if (query.error) return <ErrorAlert error={query.error} />;
+  return <>{children}</>;
+}
+
+function Bucket({
+  label,
+  value,
+  tone = 'plain',
+  loading,
+}: {
+  label: string;
+  value: string | undefined;
+  tone?: 'plain' | 'total' | 'warn' | 'bad';
+  loading: boolean;
+}) {
+  // Colour means "look at this". A red ₹0.00 in the 90-day bucket is an alarm
+  // about nothing, and a screen that cries wolf gets ignored — so the warning
+  // tones only apply once there is actually money in the bucket.
+  const empty = Number(value ?? 0) === 0;
+  const toneClass = empty
+    ? 'text-slate-400 dark:text-slate-600'
+    : {
+        plain: 'text-slate-900 dark:text-slate-100',
+        total: 'text-slate-900 dark:text-slate-100',
+        warn: 'text-amber-600 dark:text-amber-400',
+        bad: 'text-rose-600 dark:text-rose-400',
+      }[tone];
+
+  return (
+    <div
+      className={[
+        'rounded-xl border p-3',
+        tone === 'total'
+          ? 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900'
+          : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900',
+      ].join(' ')}
+    >
+      <p className="text-xs text-slate-500">{label}</p>
+      {loading ? (
+        <div className="mt-1.5 h-6 w-20 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+      ) : (
+        <p className={`tabular mt-0.5 text-lg font-semibold ${toneClass}`}>{formatMoney(value)}</p>
+      )}
+    </div>
+  );
+}
+
+export { formatDate };

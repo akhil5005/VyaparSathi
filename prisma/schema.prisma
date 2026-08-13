@@ -1,0 +1,1360 @@
+// GSTCal — GST billing, inventory and ledger for a paper trading business.
+//
+// Design rules that the rest of the app depends on:
+//   1. Every tenant-owned row carries businessId. Never query without it.
+//   2. Issued documents are immutable. Corrections happen via credit/debit notes,
+//      never by editing or deleting an invoice (GST law + audit trail).
+//   3. Money is Decimal(14,2). Quantity is Decimal(14,3). Never Float.
+//   4. Tax amounts are stored per line AND per header, computed at issue time,
+//      so a reprint years later matches the original exactly.
+//   5. Stock and ledger are append-only movement logs; ProductStock / PartyBalance
+//      are caches updated inside the same transaction.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserRole {
+  OWNER // full access incl. user management and settings
+  MANAGER // everything except user management
+  BILLING_STAFF // create invoices, receive payments; cannot edit masters or see cost
+  ACCOUNTANT // read-only + payments + reports; cannot create invoices
+  VIEWER // read-only
+}
+
+enum PartyType {
+  CUSTOMER
+  SUPPLIER
+  BOTH
+}
+
+/// Determines invoice format and whether tax can be charged.
+enum GstRegistrationType {
+  REGULAR // normal registered dealer — B2B invoice
+  COMPOSITION // registered under composition scheme
+  UNREGISTERED // B2C
+  CONSUMER // walk-in retail
+  SEZ_WITH_PAYMENT
+  SEZ_WITHOUT_PAYMENT
+  EXPORT
+}
+
+enum DocumentType {
+  SALES_INVOICE
+  CREDIT_NOTE
+  DEBIT_NOTE
+  DELIVERY_CHALLAN
+  PURCHASE_INVOICE // our internal reference for a supplier's bill
+  PURCHASE_RETURN
+  PAYMENT_RECEIPT // money in from a customer
+  PAYMENT_VOUCHER // money out to a supplier
+  QUOTATION
+}
+
+enum InvoiceStatus {
+  DRAFT // editable, no number assigned yet
+  ISSUED // number assigned, immutable
+  CANCELLED // cancelled same-day before filing (rare); keeps the number reserved
+}
+
+enum SupplyType {
+  INTRA_STATE // CGST + SGST
+  INTER_STATE // IGST
+}
+
+enum NoteType {
+  CREDIT_NOTE // we issue: sales return, rate reduction, overcharge
+  DEBIT_NOTE // we issue: undercharge on a sale, or purchase return to supplier
+}
+
+enum NoteReason {
+  SALES_RETURN
+  PURCHASE_RETURN
+  RATE_DIFFERENCE
+  QUANTITY_SHORTAGE
+  DAMAGED_GOODS
+  POST_SALE_DISCOUNT
+  CORRECTION
+  OTHER
+}
+
+enum PaymentDirection {
+  RECEIPT // money in from a customer
+  PAYMENT // money out to a supplier
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  CHEQUE
+  BANK_TRANSFER
+  NEFT_RTGS
+  CARD
+  ADJUSTMENT // book adjustment, no cash movement
+}
+
+enum ChequeStatus {
+  PENDING // held, post-dated
+  DEPOSITED
+  CLEARED
+  BOUNCED
+  CANCELLED
+}
+
+enum StockMovementType {
+  OPENING
+  PURCHASE_IN
+  SALE_OUT
+  SALES_RETURN_IN
+  PURCHASE_RETURN_OUT
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  DAMAGE_OUT
+}
+
+enum LedgerVoucherType {
+  OPENING_BALANCE
+  SALES_INVOICE
+  PURCHASE_INVOICE
+  CREDIT_NOTE
+  DEBIT_NOTE
+  RECEIPT
+  PAYMENT
+  CHEQUE_BOUNCE
+  ADJUSTMENT
+}
+
+enum EwayBillStatus {
+  NOT_REQUIRED
+  PENDING // required, not generated yet
+  GENERATED
+  PART_B_PENDING // Part-A filed, vehicle details missing
+  CANCELLED
+  EXPIRED
+}
+
+enum TransportMode {
+  ROAD
+  RAIL
+  AIR
+  SHIP
+}
+
+enum PrinterConnection {
+  USB
+  NETWORK
+  BLUETOOTH
+  SYSTEM // OS default printer driver
+}
+
+enum PaperWidth {
+  MM_58
+  MM_80
+  A4
+  A5
+}
+
+// ============================================================================
+// TENANCY + AUTH
+// ============================================================================
+
+/// The firm itself. Root of the multi-tenant tree — every other table hangs off this.
+model Business {
+  id String @id @default(cuid())
+
+  legalName           String
+  tradeName           String?
+  gstin               String              @unique @db.VarChar(15)
+  /// First 2 chars of the GSTIN. Compared against the party's state code to
+  /// decide CGST+SGST vs IGST. Denormalised so billing never re-parses.
+  stateCode           String              @db.VarChar(2)
+  stateName           String
+  pan                 String?             @db.VarChar(10)
+  /// Regular dealers charge and claim GST. Composition dealers cannot.
+  gstRegistrationType GstRegistrationType @default(REGULAR)
+
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  pincode      String  @db.VarChar(6)
+  phone        String
+  email        String?
+
+  bankName          String?
+  bankAccountNumber String?
+  bankIfsc          String?
+  upiId             String?
+
+  logoUrl           String?
+  invoiceTerms      String? @db.Text
+  invoiceFooter     String? @db.Text
+  /// Financial year start month, 1-12. India = 4 (April).
+  fyStartMonth      Int     @default(4)
+  /// Turnover-driven: 4 for < 5cr, 6 above. Controls HSN digits on the invoice.
+  hsnDigits         Int     @default(4)
+  /// Interstate movement above this value needs an e-way bill. Default 50,000.
+  ewayBillThreshold Decimal @default(50000) @db.Decimal(14, 2)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  parties          Party[]
+  products         Product[]
+  units            Unit[]
+  hsnCodes         HsnCode[]
+  numberSequences  NumberSequence[]
+  salesInvoices    SalesInvoice[]
+  purchaseInvoices PurchaseInvoice[]
+  creditDebitNotes CreditDebitNote[]
+  payments         Payment[]
+  cheques          Cheque[]
+  ledgerEntries    LedgerEntry[]
+  stockMovements   StockMovement[]
+  productStocks    ProductStock[]
+  ewayBills        EwayBill[]
+  printerProfiles  PrinterProfile[]
+  auditLogs        AuditLog[]
+
+  @@index([gstin])
+  @@map("businesses")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  fullName String
+  /// Optional: a shop assistant may only ever log in with a phone number.
+  email    String?
+  phone    String
+  role     UserRole @default(BILLING_STAFF)
+
+  /// Argon2id. Never bcrypt, never plain.
+  passwordHash String
+  /// Bumped on password change / "log out everywhere". Access tokens carrying an
+  /// older value are rejected without a DB lookup for the token itself.
+  tokenVersion Int    @default(0)
+
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
+
+  /// TOTP secret, encrypted at rest. Null when 2FA is off.
+  totpSecret    String?
+  totpEnabledAt DateTime?
+  /// Hashed single-use recovery codes.
+  recoveryCodes String[]  @default([])
+
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  lastLoginIp      String?
+
+  isActive      Boolean   @default(true)
+  deactivatedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions                Session[]
+  passwordResetTokens     PasswordResetToken[]
+  verificationTokens      VerificationToken[]
+  loginAttempts           LoginAttempt[]
+  auditLogs               AuditLog[]
+  createdSalesInvoices    SalesInvoice[]       @relation("SalesInvoiceCreatedBy")
+  createdPurchaseInvoices PurchaseInvoice[]    @relation("PurchaseInvoiceCreatedBy")
+  createdNotes            CreditDebitNote[]    @relation("NoteCreatedBy")
+  recordedPayments        Payment[]            @relation("PaymentRecordedBy")
+  stockMovements          StockMovement[]      @relation("StockMovementCreatedBy")
+
+  /// Email and phone are unique per business, not globally — the same person
+  /// can hold accounts at two firms.
+  @@unique([businessId, email])
+  @@unique([businessId, phone])
+  @@index([businessId, isActive])
+  @@map("users")
+}
+
+/// One row per logged-in device. Holds the hashed refresh token.
+model Session {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the opaque refresh token. The raw token only ever exists in the
+  /// client's cookie — a DB leak cannot be replayed.
+  refreshTokenHash    String  @unique
+  /// Rotation chain. On refresh we mint a new session and point the old one here.
+  /// Presenting an already-rotated token means the token was stolen → revoke the
+  /// whole chain (reuse detection).
+  replacedBySessionId String? @unique
+
+  userAgent  String?
+  ipAddress  String?
+  deviceName String?
+
+  expiresAt     DateTime
+  lastUsedAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedReason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the token sent by email/SMS.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  ipAddress String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model VerificationToken {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// "EMAIL" | "PHONE"
+  channel   String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int       @default(0)
+  createdAt DateTime  @default(now())
+
+  @@index([userId, channel])
+  @@map("verification_tokens")
+}
+
+/// Every attempt, success or failure. Drives lockout and gives you an answer
+/// when your father asks "did someone else log in last night?".
+model LoginAttempt {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// What was typed — email or phone. Kept even when no user matched.
+  identifier String
+  successful Boolean
+  failReason String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("login_attempts")
+}
+
+/// Append-only. Nothing here is ever updated or deleted.
+model AuditLog {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action     String // "invoice.issue", "user.role_change", "payment.delete"
+  entityType String
+  entityId   String?
+  /// Row state before and after. Null on create/delete respectively.
+  before     Json?
+  after      Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// MASTERS
+// ============================================================================
+
+/// A customer, a supplier, or both. Paper mills you buy from sometimes also buy
+/// back trimmings, so a single party table beats two half-duplicated ones.
+model Party {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// Short name your father actually says out loud — this is what voice matching
+  /// resolves against.
+  displayName String
+  legalName   String?
+  partyType   PartyType @default(CUSTOMER)
+
+  gstin               String?             @db.VarChar(15)
+  gstRegistrationType GstRegistrationType @default(UNREGISTERED)
+  pan                 String?             @db.VarChar(10)
+
+  phone          String?
+  alternatePhone String?
+  whatsappNumber String?
+  email          String?
+  contactPerson  String?
+
+  addressLine1 String?
+  addressLine2 String?
+  city         String?
+  /// Place of supply. Derived from GSTIN[0:2] when a GSTIN exists, otherwise
+  /// chosen manually. This single field decides CGST+SGST vs IGST.
+  stateCode    String  @db.VarChar(2)
+  stateName    String?
+  pincode      String? @db.VarChar(6)
+
+  /// Positive = party owes us. Negative = we owe party. As on the day you
+  /// switched off Catpro.
+  openingBalance     Decimal   @default(0) @db.Decimal(14, 2)
+  openingBalanceDate DateTime?
+  creditLimit        Decimal?  @db.Decimal(14, 2)
+  creditDays         Int?
+
+  notes     String?  @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  partyRates       PartyRate[]
+  salesInvoices    SalesInvoice[]
+  purchaseInvoices PurchaseInvoice[]
+  creditDebitNotes CreditDebitNote[]
+  payments         Payment[]
+  cheques          Cheque[]
+  ledgerEntries    LedgerEntry[]
+  balance          PartyBalance?
+
+  @@unique([businessId, displayName])
+  @@index([businessId, partyType, isActive])
+  @@index([businessId, gstin])
+  @@index([businessId, phone])
+  @@map("parties")
+}
+
+/// Cached running balance so the customer list doesn't sum the whole ledger.
+/// Rebuildable from LedgerEntry at any time.
+model PartyBalance {
+  partyId String @id
+  party   Party  @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  /// Positive = receivable (party owes us). Negative = payable.
+  currentBalance Decimal   @default(0) @db.Decimal(14, 2)
+  lastEntryAt    DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@map("party_balances")
+}
+
+/// Party-specific rate for a product. Regular customers get their own price;
+/// billing falls back to Product.defaultSaleRate when no row exists.
+model PartyRate {
+  id        String  @id @default(cuid())
+  partyId   String
+  party     Party   @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unitId    String
+  unit      Unit    @relation(fields: [unitId], references: [id])
+
+  rate          Decimal   @db.Decimal(14, 4)
+  effectiveFrom DateTime  @default(now())
+  effectiveTo   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([partyId, productId, unitId, effectiveFrom])
+  @@index([partyId, productId])
+  @@map("party_rates")
+}
+
+/// Unit of measure. `uqc` is the government's Unit Quantity Code, required on
+/// GST returns — reams must be reported as some recognised UQC, usually NOS/PAC.
+model Unit {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name         String // "Ream", "Kilogram", "Packet", "Sheet", "Bundle"
+  symbol       String // "rm", "kg", "pkt", "sht", "bdl"
+  /// Government UQC: KGS, NOS, PAC, BOX, MTR...
+  uqc          String  @db.VarChar(8)
+  /// Reams can be fractional in practice (half a ream); sheets cannot.
+  allowDecimal Boolean @default(true)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  products     Product[]
+  productUnits ProductUnit[]
+  partyRates   PartyRate[]
+
+  @@unique([businessId, symbol])
+  @@map("units")
+}
+
+/// HSN master. GST rates attach to HSN, not to the product — so a rate revision
+/// is one row, not a bulk product update.
+/// Paper sits in Chapter 48 (e.g. 4802 = uncoated writing/printing paper).
+model HsnCode {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  code        String @db.VarChar(8)
+  description String
+
+  createdAt DateTime @default(now())
+
+  taxRates HsnTaxRate[]
+  products Product[]
+
+  @@unique([businessId, code])
+  @@map("hsn_codes")
+}
+
+/// Rate history. GST slabs get revised by the Council; an invoice reprinted two
+/// years later must show the rate that applied on its invoice date, so we look
+/// the rate up by date rather than reading a current value off the product.
+model HsnTaxRate {
+  id        String  @id @default(cuid())
+  hsnCodeId String
+  hsnCode   HsnCode @relation(fields: [hsnCodeId], references: [id], onDelete: Cascade)
+
+  /// Total GST percent, e.g. 5.00 / 12.00 / 18.00. Split half/half into CGST+SGST
+  /// for intra-state; charged whole as IGST for inter-state.
+  gstRate  Decimal @db.Decimal(5, 2)
+  cessRate Decimal @default(0) @db.Decimal(5, 2)
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  notes         String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([hsnCodeId, effectiveFrom])
+  @@index([hsnCodeId, effectiveFrom, effectiveTo])
+  @@map("hsn_tax_rates")
+}
+
+/// A sellable item. Paper specifics (gsm, size, sheets per ream) live here
+/// because they are what makes the kg <-> ream conversion computable.
+model Product {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name        String // "JK Copier A4 75gsm"
+  /// What your father calls it out loud. Voice matching searches this too.
+  aliasNames  String[] @default([])
+  sku         String?
+  brand       String?
+  description String?
+
+  hsnCodeId String
+  hsnCode   HsnCode @relation(fields: [hsnCodeId], references: [id])
+
+  // ---- Paper attributes ----
+  gsm                 Int? // 70, 75, 80, 100...
+  sheetSize           String? // "A4", "A3", "23x36"
+  sheetsPerReam       Int? // usually 500
+  /// Weight of one base unit in kg. For a 75gsm A4 ream of 500 sheets this is
+  /// ~2.32. Used as the fallback kg conversion when no explicit ProductUnit row
+  /// exists, and for e-way bill gross weight.
+  weightPerBaseUnitKg Decimal? @db.Decimal(10, 4)
+
+  // ---- Stock unit ----
+  /// Everything in StockMovement is expressed in this unit. Sales and purchases
+  /// convert into it via ProductUnit.conversionToBase.
+  baseUnitId String
+  baseUnit   Unit   @relation(fields: [baseUnitId], references: [id])
+
+  defaultSaleRate       Decimal? @db.Decimal(14, 4)
+  defaultPurchaseRate   Decimal? @db.Decimal(14, 4)
+  /// Sale rate is quoted per this unit by default (usually ream).
+  defaultSaleUnitId     String?
+  defaultPurchaseUnitId String?
+
+  reorderLevel Decimal? @db.Decimal(14, 3)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  productUnits         ProductUnit[]
+  partyRates           PartyRate[]
+  salesInvoiceItems    SalesInvoiceItem[]
+  purchaseInvoiceItems PurchaseInvoiceItem[]
+  noteItems            CreditDebitNoteItem[]
+  stockMovements       StockMovement[]
+  stock                ProductStock?
+
+  @@unique([businessId, name])
+  @@index([businessId, isActive])
+  @@index([businessId, hsnCodeId])
+  @@map("products")
+}
+
+/// The kg <-> ream bridge, per product.
+///
+/// Example for "JK Copier A4 75gsm" with base unit REAM:
+///   REAM   -> conversionToBase 1
+///   PACKET -> conversionToBase 5      (a packet holds 5 reams)
+///   KG     -> conversionToBase 0.4310 (1 kg = 1/2.32 reams)
+///   SHEET  -> conversionToBase 0.002  (1/500)
+///
+/// This is what lets him buy in kg from the mill and sell in reams without
+/// doing arithmetic on a calculator every time.
+model ProductUnit {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unitId    String
+  unit      Unit    @relation(fields: [unitId], references: [id])
+
+  /// Multiply a quantity in this unit by this factor to get base units.
+  conversionToBase Decimal @db.Decimal(16, 6)
+
+  isPurchaseDefault Boolean @default(false)
+  isSalesDefault    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, unitId])
+  @@map("product_units")
+}
+
+/// Cached on-hand quantity + moving weighted-average cost.
+/// Always updated inside the same transaction as the StockMovement that caused
+/// it; rebuildable by replaying StockMovement.
+model ProductStock {
+  productId  String   @id
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// In the product's base unit.
+  quantityOnHand     Decimal @default(0) @db.Decimal(14, 3)
+  /// Moving weighted average. Gives margin per invoice and stock valuation.
+  avgCostPerBaseUnit Decimal @default(0) @db.Decimal(14, 4)
+
+  lastMovementAt DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  @@index([businessId])
+  @@map("product_stocks")
+}
+
+// ============================================================================
+// DOCUMENT NUMBERING
+// ============================================================================
+
+/// GST requires invoice numbers to be sequential, unique, and gap-free within a
+/// financial year, max 16 characters. Allocation must happen inside the same
+/// transaction as the invoice insert, with the row locked
+/// (SELECT ... FOR UPDATE), or two concurrent bills collide.
+model NumberSequence {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  documentType  DocumentType
+  /// "2026-27"
+  financialYear String       @db.VarChar(7)
+
+  prefix     String @default("") // "INV/"
+  suffix     String @default("") // "/26-27"
+  padding    Int    @default(4) // INV/0001/26-27
+  nextNumber Int    @default(1)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, documentType, financialYear])
+  @@map("number_sequences")
+}
+
+// ============================================================================
+// SALES
+// ============================================================================
+
+model SalesInvoice {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// Null while DRAFT. Assigned from NumberSequence at issue time and never reused.
+  invoiceNumber String?       @db.VarChar(16)
+  financialYear String        @db.VarChar(7)
+  status        InvoiceStatus @default(DRAFT)
+
+  invoiceDate DateTime
+  dueDate     DateTime?
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id])
+
+  // ---- Party snapshot ----
+  // Copied at issue time. If the customer later changes address, old invoices
+  // must still print exactly as they were issued.
+  partyName      String
+  partyGstin     String? @db.VarChar(15)
+  partyAddress   String? @db.Text
+  partyStateCode String  @db.VarChar(2)
+  partyPhone     String?
+
+  /// Derived from businessStateCode vs partyStateCode. Not user-selectable.
+  supplyType    SupplyType
+  placeOfSupply String     @db.VarChar(2)
+  reverseCharge Boolean    @default(false)
+
+  // ---- Totals (all computed at issue, stored, never recomputed on read) ----
+  subtotal       Decimal @default(0) @db.Decimal(14, 2) // sum of qty * rate
+  totalDiscount  Decimal @default(0) @db.Decimal(14, 2)
+  taxableValue   Decimal @default(0) @db.Decimal(14, 2) // subtotal - discount
+  totalCgst      Decimal @default(0) @db.Decimal(14, 2)
+  totalSgst      Decimal @default(0) @db.Decimal(14, 2)
+  totalIgst      Decimal @default(0) @db.Decimal(14, 2)
+  totalCess      Decimal @default(0) @db.Decimal(14, 2)
+  freightCharges Decimal @default(0) @db.Decimal(14, 2)
+  otherCharges   Decimal @default(0) @db.Decimal(14, 2)
+  /// GST totals must be rounded to the nearest rupee; the difference prints as
+  /// a "Round Off" line. Can be negative.
+  roundOff       Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal     Decimal @default(0) @db.Decimal(14, 2)
+  amountInWords  String?
+
+  /// Maintained by payment allocation. amountDue = grandTotal - amountPaid.
+  amountPaid Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Sum of (qty * avgCost) at issue time. Lets you show margin per bill
+  /// without recomputing history. Hidden from BILLING_STAFF.
+  costOfGoods Decimal? @db.Decimal(14, 2)
+
+  notes         String? @db.Text
+  transportName String?
+  vehicleNumber String?
+
+  createdById String
+  createdBy   User   @relation("SalesInvoiceCreatedBy", fields: [createdById], references: [id])
+
+  /// Set when the voice pipeline produced this bill. Useful for measuring how
+  /// well the Punjabi parser actually works in the field.
+  createdViaVoice Boolean @default(false)
+  voiceSessionId  String?
+
+  issuedAt        DateTime?
+  cancelledAt     DateTime?
+  cancelledReason String?
+  printedCount    Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  items       SalesInvoiceItem[]
+  ewayBill    EwayBill?
+  notesIssued CreditDebitNote[]   @relation("NoteAgainstSalesInvoice")
+  allocations PaymentAllocation[] @relation("AllocationToSalesInvoice")
+
+  @@unique([businessId, financialYear, invoiceNumber])
+  @@index([businessId, invoiceDate])
+  @@index([businessId, partyId, status])
+  @@index([businessId, status])
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceItem {
+  id        String       @id @default(cuid())
+  invoiceId String
+  invoice   SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  lineNumber Int
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  // ---- Product snapshot ----
+  productName String
+  hsnCode     String  @db.VarChar(8)
+  description String?
+
+  // ---- Quantity ----
+  /// As entered — e.g. 10 reams.
+  quantity         Decimal @db.Decimal(14, 3)
+  unitId           String
+  unitName         String
+  uqc              String  @db.VarChar(8)
+  /// Snapshot of ProductUnit.conversionToBase. Snapshotted because a later
+  /// correction to the conversion factor must not silently rewrite past stock.
+  conversionToBase Decimal @db.Decimal(16, 6)
+  /// quantity * conversionToBase. What StockMovement actually decrements.
+  baseQuantity     Decimal @db.Decimal(14, 3)
+
+  // ---- Money ----
+  rate            Decimal @db.Decimal(14, 4)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  discountAmount  Decimal @default(0) @db.Decimal(14, 2)
+  taxableValue    Decimal @db.Decimal(14, 2)
+
+  // ---- Tax (rates snapshotted from HsnTaxRate as at invoiceDate) ----
+  cgstRate   Decimal @default(0) @db.Decimal(5, 2)
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstRate   Decimal @default(0) @db.Decimal(5, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstRate   Decimal @default(0) @db.Decimal(5, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  cessRate   Decimal @default(0) @db.Decimal(5, 2)
+  cessAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  lineTotal Decimal @db.Decimal(14, 2)
+
+  /// avgCostPerBaseUnit at the moment of sale.
+  costPerBaseUnit Decimal? @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@unique([invoiceId, lineNumber])
+  @@index([productId])
+  @@map("sales_invoice_items")
+}
+
+// ============================================================================
+// PURCHASES
+// ============================================================================
+
+model PurchaseInvoice {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// Our own internal reference.
+  purchaseNumber        String        @db.VarChar(20)
+  /// The number printed on the supplier's bill — this is what goes on GSTR-2B
+  /// reconciliation, so it matters more than ours.
+  supplierInvoiceNumber String
+  supplierInvoiceDate   DateTime
+  status                InvoiceStatus @default(DRAFT)
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id])
+
+  partyName      String
+  partyGstin     String? @db.VarChar(15)
+  partyStateCode String  @db.VarChar(2)
+
+  supplyType    SupplyType
+  reverseCharge Boolean    @default(false)
+
+  subtotal       Decimal @default(0) @db.Decimal(14, 2)
+  totalDiscount  Decimal @default(0) @db.Decimal(14, 2)
+  taxableValue   Decimal @default(0) @db.Decimal(14, 2)
+  totalCgst      Decimal @default(0) @db.Decimal(14, 2)
+  totalSgst      Decimal @default(0) @db.Decimal(14, 2)
+  totalIgst      Decimal @default(0) @db.Decimal(14, 2)
+  totalCess      Decimal @default(0) @db.Decimal(14, 2)
+  freightCharges Decimal @default(0) @db.Decimal(14, 2)
+  otherCharges   Decimal @default(0) @db.Decimal(14, 2)
+  roundOff       Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal     Decimal @default(0) @db.Decimal(14, 2)
+
+  amountPaid Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Input Tax Credit. GST paid on purchases offsets GST collected on sales —
+  /// this is real money, so track whether each bill is actually claimable.
+  itcEligible  Boolean @default(true)
+  itcClaimed   Boolean @default(false)
+  itcClaimedIn String? @db.VarChar(7) // "2026-07" return period
+
+  notes String? @db.Text
+
+  createdById String
+  createdBy   User   @relation("PurchaseInvoiceCreatedBy", fields: [createdById], references: [id])
+
+  issuedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items       PurchaseInvoiceItem[]
+  notesIssued CreditDebitNote[]     @relation("NoteAgainstPurchaseInvoice")
+  allocations PaymentAllocation[]   @relation("AllocationToPurchaseInvoice")
+
+  @@unique([businessId, purchaseNumber])
+  /// A supplier cannot send you the same invoice number twice — catches
+  /// double-entry, which is the most common data-entry error in purchases.
+  @@unique([businessId, partyId, supplierInvoiceNumber])
+  @@index([businessId, supplierInvoiceDate])
+  @@index([businessId, partyId])
+  @@map("purchase_invoices")
+}
+
+model PurchaseInvoiceItem {
+  id        String          @id @default(cuid())
+  invoiceId String
+  invoice   PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  lineNumber Int
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  productName String
+  hsnCode     String @db.VarChar(8)
+
+  quantity         Decimal @db.Decimal(14, 3)
+  unitId           String
+  unitName         String
+  uqc              String  @db.VarChar(8)
+  conversionToBase Decimal @db.Decimal(16, 6)
+  baseQuantity     Decimal @db.Decimal(14, 3)
+
+  rate            Decimal @db.Decimal(14, 4)
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  discountAmount  Decimal @default(0) @db.Decimal(14, 2)
+  taxableValue    Decimal @db.Decimal(14, 2)
+
+  cgstRate   Decimal @default(0) @db.Decimal(5, 2)
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstRate   Decimal @default(0) @db.Decimal(5, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstRate   Decimal @default(0) @db.Decimal(5, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  cessRate   Decimal @default(0) @db.Decimal(5, 2)
+  cessAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  lineTotal Decimal @db.Decimal(14, 2)
+
+  /// (taxableValue + freight share) / baseQuantity. Feeds the moving average.
+  landedCostPerBaseUnit Decimal? @db.Decimal(14, 4)
+
+  createdAt DateTime @default(now())
+
+  @@unique([invoiceId, lineNumber])
+  @@index([productId])
+  @@map("purchase_invoice_items")
+}
+
+// ============================================================================
+// CREDIT / DEBIT NOTES
+// ============================================================================
+
+/// An issued GST invoice can never be edited or deleted. Returns, rate
+/// corrections and short supply are handled by issuing a note against it.
+model CreditDebitNote {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  noteNumber    String        @db.VarChar(16)
+  financialYear String        @db.VarChar(7)
+  noteType      NoteType
+  reason        NoteReason
+  reasonNote    String?
+  status        InvoiceStatus @default(DRAFT)
+
+  noteDate DateTime
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id])
+
+  partyName      String
+  partyGstin     String? @db.VarChar(15)
+  partyStateCode String  @db.VarChar(2)
+
+  /// Exactly one of these is set. GSTR-1 requires the original invoice number
+  /// and date to be reported alongside the note.
+  againstSalesInvoiceId    String?
+  againstSalesInvoice      SalesInvoice?    @relation("NoteAgainstSalesInvoice", fields: [againstSalesInvoiceId], references: [id])
+  againstPurchaseInvoiceId String?
+  againstPurchaseInvoice   PurchaseInvoice? @relation("NoteAgainstPurchaseInvoice", fields: [againstPurchaseInvoiceId], references: [id])
+  originalInvoiceNumber    String?
+  originalInvoiceDate      DateTime?
+
+  supplyType SupplyType
+
+  taxableValue Decimal @default(0) @db.Decimal(14, 2)
+  totalCgst    Decimal @default(0) @db.Decimal(14, 2)
+  totalSgst    Decimal @default(0) @db.Decimal(14, 2)
+  totalIgst    Decimal @default(0) @db.Decimal(14, 2)
+  totalCess    Decimal @default(0) @db.Decimal(14, 2)
+  roundOff     Decimal @default(0) @db.Decimal(14, 2)
+  grandTotal   Decimal @default(0) @db.Decimal(14, 2)
+
+  /// A rate-difference note moves money but no goods.
+  affectsStock Boolean @default(true)
+
+  createdById String
+  createdBy   User   @relation("NoteCreatedBy", fields: [createdById], references: [id])
+
+  issuedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items CreditDebitNoteItem[]
+
+  @@unique([businessId, financialYear, noteNumber])
+  @@index([businessId, noteDate])
+  @@index([businessId, partyId])
+  @@map("credit_debit_notes")
+}
+
+model CreditDebitNoteItem {
+  id     String          @id @default(cuid())
+  noteId String
+  note   CreditDebitNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  lineNumber Int
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  productName String
+  hsnCode     String @db.VarChar(8)
+
+  quantity         Decimal @db.Decimal(14, 3)
+  unitId           String
+  unitName         String
+  uqc              String  @db.VarChar(8)
+  conversionToBase Decimal @db.Decimal(16, 6)
+  baseQuantity     Decimal @db.Decimal(14, 3)
+
+  rate         Decimal @db.Decimal(14, 4)
+  taxableValue Decimal @db.Decimal(14, 2)
+
+  cgstRate   Decimal @default(0) @db.Decimal(5, 2)
+  cgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  sgstRate   Decimal @default(0) @db.Decimal(5, 2)
+  sgstAmount Decimal @default(0) @db.Decimal(14, 2)
+  igstRate   Decimal @default(0) @db.Decimal(5, 2)
+  igstAmount Decimal @default(0) @db.Decimal(14, 2)
+  cessRate   Decimal @default(0) @db.Decimal(5, 2)
+  cessAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  lineTotal Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([noteId, lineNumber])
+  @@map("credit_debit_note_items")
+}
+
+// ============================================================================
+// MONEY
+// ============================================================================
+
+/// A receipt or a payment. Never carries a bill reference directly — the link
+/// to invoices is PaymentAllocation, because one cheque routinely settles four
+/// old bills and leaves a bit on account.
+model Payment {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  voucherNumber String           @db.VarChar(20)
+  direction     PaymentDirection
+  paymentDate   DateTime
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id])
+
+  amount Decimal     @db.Decimal(14, 2)
+  mode   PaymentMode
+
+  referenceNumber String? // UPI txn id, NEFT UTR, cheque no.
+  bankName        String?
+  notes           String?
+
+  chequeId String? @unique
+  cheque   Cheque? @relation(fields: [chequeId], references: [id])
+
+  /// amount - sum(allocations). Money sitting on account, not yet applied to a
+  /// specific bill. This is what "advance" means in the ledger.
+  unallocatedAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  recordedById String
+  recordedBy   User   @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+
+  /// Payments are reversed, not deleted — a reversal writes a contra
+  /// LedgerEntry so the audit trail survives.
+  reversedAt     DateTime?
+  reversedReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  allocations PaymentAllocation[]
+
+  @@unique([businessId, voucherNumber])
+  @@index([businessId, paymentDate])
+  @@index([businessId, partyId, direction])
+  @@map("payments")
+}
+
+/// Settles part of one payment against one invoice. Default strategy is
+/// oldest-bill-first (FIFO), overridable by the user.
+model PaymentAllocation {
+  id        String  @id @default(cuid())
+  paymentId String
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  salesInvoiceId String?
+  salesInvoice   SalesInvoice? @relation("AllocationToSalesInvoice", fields: [salesInvoiceId], references: [id])
+
+  purchaseInvoiceId String?
+  purchaseInvoice   PurchaseInvoice? @relation("AllocationToPurchaseInvoice", fields: [purchaseInvoiceId], references: [id])
+
+  amount Decimal @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([paymentId])
+  @@index([salesInvoiceId])
+  @@index([purchaseInvoiceId])
+  @@map("payment_allocations")
+}
+
+/// Post-dated cheques are how most of this trade actually settles. Tracking
+/// them separately means you can answer "which cheques clear this week?".
+model Cheque {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id])
+
+  direction PaymentDirection
+
+  chequeNumber String
+  bankName     String
+  branchName   String?
+  /// The date written on the cheque — may be weeks in the future.
+  chequeDate   DateTime
+  amount       Decimal  @db.Decimal(14, 2)
+
+  status        ChequeStatus @default(PENDING)
+  depositedAt   DateTime?
+  clearedAt     DateTime?
+  bouncedAt     DateTime?
+  bounceReason  String?
+  /// Bank charges on a bounce, recovered from the party.
+  bounceCharges Decimal?     @db.Decimal(14, 2)
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payment Payment?
+
+  @@unique([businessId, partyId, chequeNumber])
+  @@index([businessId, status, chequeDate])
+  @@map("cheques")
+}
+
+/// Append-only party ledger. One row per financial event. PartyBalance is
+/// derived from this and can always be rebuilt by replaying it.
+model LedgerEntry {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  partyId String
+  party   Party  @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  entryDate     DateTime
+  voucherType   LedgerVoucherType
+  /// Id of the source row (invoice / payment / note). Not a FK because it
+  /// points at several different tables.
+  voucherId     String?
+  voucherNumber String?
+
+  /// Increases what the party owes us (a sale).
+  debit  Decimal @default(0) @db.Decimal(14, 2)
+  /// Decreases it (a receipt, a credit note).
+  credit Decimal @default(0) @db.Decimal(14, 2)
+
+  /// Running balance after this entry. Denormalised so a ledger print is a
+  /// single ordered scan with no window function.
+  runningBalance Decimal @db.Decimal(14, 2)
+
+  narration String?
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId, partyId, entryDate])
+  @@index([businessId, entryDate])
+  @@index([voucherType, voucherId])
+  @@map("ledger_entries")
+}
+
+// ============================================================================
+// STOCK
+// ============================================================================
+
+/// Append-only. Quantities are signed and always in the product's base unit.
+model StockMovement {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  movementType StockMovementType
+  movementDate DateTime
+
+  /// Positive for inward, negative for outward. Base unit.
+  baseQuantity    Decimal  @db.Decimal(14, 3)
+  /// Cost per base unit for inward movements; feeds the moving average.
+  ratePerBaseUnit Decimal? @db.Decimal(14, 4)
+
+  /// Stock on hand immediately after this movement — makes "what was my stock
+  /// on 31 March?" answerable without replaying the log.
+  balanceAfter Decimal @db.Decimal(14, 3)
+
+  referenceType   String? // "SALES_INVOICE" | "PURCHASE_INVOICE" | "CREDIT_NOTE" | "ADJUSTMENT"
+  referenceId     String?
+  referenceNumber String?
+
+  notes String?
+
+  createdById String?
+  createdBy   User?   @relation("StockMovementCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId, productId, movementDate])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+// ============================================================================
+// E-WAY BILL
+// ============================================================================
+
+/// Required for movement of goods above the threshold (₹50,000 for
+/// inter-state). Generated against the NIC portal through a GSP.
+model EwayBill {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  salesInvoiceId String       @unique
+  salesInvoice   SalesInvoice @relation(fields: [salesInvoiceId], references: [id], onDelete: Cascade)
+
+  status EwayBillStatus @default(PENDING)
+
+  /// 12-digit number returned by the portal.
+  ewbNumber String?   @db.VarChar(12)
+  ewbDate   DateTime?
+  /// Portal-computed expiry, driven by distance. One day per 200 km (road).
+  validUpto DateTime?
+
+  /// 1 = Supply, 2 = Export, 3 = Job Work, ... (NIC codes)
+  supplyTypeCode String? @db.VarChar(2)
+  subSupplyType  String? @db.VarChar(2)
+  documentType   String? @db.VarChar(3)
+
+  fromPincode String? @db.VarChar(6)
+  toPincode   String? @db.VarChar(6)
+  /// Drives validity. Portal will auto-calculate if left null.
+  distanceKm  Int?
+
+  transportMode      TransportMode @default(ROAD)
+  transporterName    String?
+  transporterGstin   String?       @db.VarChar(15)
+  transporterDocNo   String?
+  transporterDocDate DateTime?
+
+  /// Part-B. Without this the e-way bill is incomplete and goods cannot move.
+  vehicleNumber String? @db.VarChar(15)
+  /// "R" = Regular, "O" = Over Dimensional Cargo
+  vehicleType   String? @db.VarChar(1)
+
+  grossWeightKg Decimal? @db.Decimal(12, 3)
+
+  cancelledAt          DateTime?
+  cancelReason         String?
+  /// Portal only allows cancellation within 24 hours of generation.
+  cancellationDeadline DateTime?
+
+  /// Full request/response kept for debugging the GSP integration — the NIC
+  /// error codes are cryptic and you will need the raw payload.
+  apiRequestPayload  Json?
+  apiResponsePayload Json?
+  lastErrorCode      String?
+  lastErrorMessage   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, status])
+  @@index([ewbNumber])
+  @@map("eway_bills")
+}
+
+// ============================================================================
+// PRINTING
+// ============================================================================
+
+/// Thermal (ESC/POS) and A4 printer configuration. A shop typically has an
+/// 80mm thermal at the counter and an A4 laser in the back for GST invoices.
+model PrinterProfile {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name       String // "Counter thermal", "Back office A4"
+  paperWidth PaperWidth        @default(MM_80)
+  connection PrinterConnection @default(USB)
+
+  /// NETWORK
+  ipAddress  String?
+  port       Int?    @default(9100)
+  /// USB / SYSTEM
+  deviceName String?
+  /// BLUETOOTH
+  macAddress String?
+
+  /// ESC/POS code page. 0 = CP437, which covers the Latin text and box glyphs a
+  /// receipt uses. Printed documents are English by design — Punjabi is voice
+  /// input only — so no Indic script ever has to reach the print head.
+  codePage          Int @default(0)
+  /// 32 on a 58mm roll, 48 on 80mm. Overridable: font-B printers fit more.
+  charactersPerLine Int @default(48)
+
+  cutAfterPrint  Boolean @default(true)
+  openCashDrawer Boolean @default(false)
+  copies         Int     @default(1)
+
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, name])
+  @@map("printer_profiles")
+}
