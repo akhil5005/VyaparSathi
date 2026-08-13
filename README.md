@@ -891,3 +891,14 @@ It is an allowlist now.
 - [ ] Enter opening stock per product with its cost.
 - [ ] Replace the dev-only reset-link logging in `auth.controller.ts` with real
       SMS/WhatsApp delivery.
+
+---
+
+## Licence
+
+[MIT](LICENSE) — © 2026 Akhil Mittal.
+
+The invented product rates in `prisma/seed-catalogue.ts` are sample data, not a
+real price list. Anyone adapting this for their own shop should replace them and
+confirm the GST rate for each HSN with their accountant before issuing an
+invoice.

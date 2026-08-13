@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "GST billing, inventory and ledger system for a paper trading business",
+  "license": "MIT",
+  "author": "Akhil Mittal",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akhil5005/VyaparSathi.git"
+  },
+  "homepage": "https://github.com/akhil5005/VyaparSathi#readme",
   "type": "module",
   "engines": {
     "node": ">=22"
