@@ -115,6 +115,24 @@ async function prepareInvoice(
   const missing = productIds.filter((id) => !productMap.has(id));
   if (missing.length > 0) throw notFound(`Unknown product(s): ${missing.join(', ')}`);
 
+  /**
+   * A discontinued product cannot be sold.
+   *
+   * Deactivating one is how a shop retires a line the mill has stopped making,
+   * and it has to actually mean something — otherwise the flag is decoration
+   * and the line keeps appearing on bills. Stock and history are untouched, and
+   * credit notes against old invoices still work, because those go through the
+   * original invoice line rather than the product.
+   */
+  const discontinued = products.filter((p) => !p.isActive);
+  if (discontinued.length > 0) {
+    throw badRequest(
+      `${discontinued.map((p) => `"${p.name}"`).join(', ')} ${
+        discontinued.length === 1 ? 'is' : 'are'
+      } discontinued and cannot be billed. Make it active again under Products if this is wrong.`,
+    );
+  }
+
   // Tax rates as at the invoice date — not "current" rates. A backdated invoice
   // must carry the rate that applied on its own date.
   const hsnCodeIds = [...new Set(products.map((p) => p.hsnCodeId))];

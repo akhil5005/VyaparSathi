@@ -23,6 +23,7 @@ import { PartiesPage } from './pages/parties/PartiesPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { NotesPage } from './pages/notes/NotesPage';
 import { Gstr1Page } from './pages/returns/Gstr1Page';
+import { AccountPage } from './pages/account/AccountPage';
 import { ApiError } from './lib/api';
 
 const queryClient = new QueryClient({
@@ -70,6 +71,10 @@ export default function App() {
                 <Route path="invoices" element={<InvoicesPage />} />
                 <Route path="parties" element={<PartiesPage />} />
                 <Route path="products" element={<ProductsPage />} />
+                {/* Every role, deliberately: Settings is manager-and-above, so
+                    putting the password form there would leave a billing clerk
+                    with no way to change their own. */}
+                <Route path="account" element={<AccountPage />} />
 
                 <Route element={<RequireRole allow={CAN_RECEIVE_PAYMENT} />}>
                   <Route path="payments" element={<PaymentsPage />} />

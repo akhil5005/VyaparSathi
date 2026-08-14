@@ -34,6 +34,7 @@ const NAV: NavItem[] = [
   { to: '/payments', label: 'Payments & udhaar', allow: CAN_RECEIVE_PAYMENT },
   { to: '/gstr1', label: 'GSTR-1', allow: CAN_FILE_RETURNS },
   { to: '/settings', label: 'Settings', allow: CAN_EDIT_MASTERS },
+  { to: '/account', label: 'My account' },
 ];
 
 export function Layout() {

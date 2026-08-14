@@ -4,6 +4,7 @@ import { PrintersSection } from './PrintersSection';
 import { HsnSection } from './HsnSection';
 import { StaffSection } from './StaffSection';
 import { BusinessSection } from './BusinessSection';
+import { BackupSection } from './BackupSection';
 
 /**
  * The things you set up once and then rarely touch.
@@ -13,7 +14,7 @@ import { BusinessSection } from './BusinessSection';
  * rates when the Council revises a slab, staff when someone joins or leaves.
  */
 
-type Tab = 'business' | 'printers' | 'hsn' | 'staff';
+type Tab = 'business' | 'printers' | 'hsn' | 'staff' | 'backup';
 
 export function SettingsPage() {
   const { can } = useAuth();
@@ -24,9 +25,10 @@ export function SettingsPage() {
     { id: 'business', label: 'Shop' },
     { id: 'printers', label: 'Printers' },
     { id: 'hsn', label: 'GST rates' },
-    // Staff management is owner-only on the server; hiding the tab avoids
-    // offering a manager a screen that would 403 on every action.
+    // Staff management and backups are owner-only on the server; hiding the
+    // tabs avoids offering a manager a screen that would 403 on every action.
     ...(canManageUsers ? ([{ id: 'staff' as const, label: 'Staff' }]) : []),
+    ...(canManageUsers ? ([{ id: 'backup' as const, label: 'Backup' }]) : []),
   ];
 
   return (
@@ -61,6 +63,7 @@ export function SettingsPage() {
       {tab === 'printers' ? <PrintersSection /> : null}
       {tab === 'hsn' ? <HsnSection /> : null}
       {tab === 'staff' && canManageUsers ? <StaffSection /> : null}
+      {tab === 'backup' && canManageUsers ? <BackupSection /> : null}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { formatDate, formatMoney } from '../../lib/money';
@@ -6,7 +7,9 @@ import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
+import { CAN_EDIT_MASTERS, useAuth } from '../../auth/AuthProvider';
 import { readBalance } from './balance';
+import { EditPartyDialog } from './EditPartyDialog';
 
 /**
  * One party, and their account.
@@ -24,6 +27,10 @@ export function PartyDetailDialog({
   partyId: string;
   onClose: () => void;
 }) {
+  const { can } = useAuth();
+  const canEdit = can(...CAN_EDIT_MASTERS);
+  const [editing, setEditing] = useState(false);
+
   const party = useQuery({
     queryKey: ['parties', partyId],
     queryFn: () => api.get<{ party: PartyDetail }>(`/api/masters/parties/${partyId}`),
@@ -63,148 +70,170 @@ export function PartyDetailDialog({
   );
 
   return (
-    <Dialog
-      open
-      onClose={onClose}
-      size="wide"
-      title={p?.displayName ?? 'Party'}
-      footer={<Button onClick={onClose}>Close</Button>}
-    >
-      {party.isLoading ? (
-        <div className="flex justify-center py-10">
-          <Spinner className="h-6 w-6 text-slate-400" />
-        </div>
-      ) : party.error ? (
-        <ErrorAlert error={party.error} />
-      ) : p ? (
-        <div className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-              <p className="text-xs text-slate-500">
-                {balance.direction === 'settled' ? 'Account' : balance.phrase}
-              </p>
-              <p className={`tabular text-xl font-semibold ${balance.tone}`}>
-                {balance.direction === 'settled' ? 'Settled up' : balance.amount}
-              </p>
-            </div>
-
-            <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-              <p className="text-xs text-slate-500">Billed to date</p>
-              <p className="tabular text-xl font-semibold text-slate-900 dark:text-slate-100">
-                {formatMoney(p.stats.totalBilled)}
-              </p>
-              <p className="text-xs text-slate-400">
-                {p.stats.invoiceCount} invoice{p.stats.invoiceCount === 1 ? '' : 's'}
-              </p>
-            </div>
-
-            <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-              <p className="text-xs text-slate-500">Credit terms</p>
-              <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">
-                {p.creditDays ? `${p.creditDays} days` : 'None'}
-              </p>
-              {p.creditLimit ? (
-                <p className="text-xs text-slate-400">Limit {formatMoney(p.creditLimit)}</p>
-              ) : null}
-            </div>
+    <>
+      <Dialog
+        open
+        onClose={onClose}
+        size="wide"
+        title={p?.displayName ?? 'Party'}
+        footer={
+          <>
+            {canEdit && p ? (
+              <Button variant="secondary" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            ) : null}
+            <Button onClick={onClose}>Close</Button>
+          </>
+        }
+      >
+        {party.isLoading ? (
+          <div className="flex justify-center py-10">
+            <Spinner className="h-6 w-6 text-slate-400" />
           </div>
-
-          <div className="grid gap-4 text-sm sm:grid-cols-2">
-            <Detail label="GSTIN">
-              <span className="font-mono">{p.gstin ?? 'Unregistered'}</span>
-              {/* The state code is what decides CGST+SGST vs IGST on every bill
-                  this party is ever given, so it is always shown. */}
-              <span className="ml-2 text-xs text-slate-500">
-                {p.stateName} ({p.stateCode})
-              </span>
-            </Detail>
-
-            <Detail label="Contact">
-              {[p.phone, p.email].filter(Boolean).join(' · ') || '—'}
-              {p.contactPerson ? (
-                <span className="text-slate-500"> · {p.contactPerson}</span>
-              ) : null}
-            </Detail>
-
-            <Detail label="Address">
-              {[p.addressLine1, p.addressLine2, p.city, p.pincode].filter(Boolean).join(', ') ||
-                '—'}
-            </Detail>
-
-            <Detail label="Opening balance">
-              {formatMoney(p.openingBalance)}
-              {p.openingBalanceDate ? (
-                <span className="text-slate-500"> as at {formatDate(p.openingBalanceDate)}</span>
-              ) : null}
-            </Detail>
-          </div>
-
-          {p.partyRates.length > 0 ? (
-            <div>
-              <h3 className="mb-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Agreed rates
-              </h3>
-              <ul className="space-y-0.5 text-sm">
-                {p.partyRates.map((rate) => (
-                  <li key={rate.id} className="flex justify-between gap-3">
-                    <span className="text-slate-700 dark:text-slate-300">
-                      {rate.product?.name ?? 'Product'}
-                      <span className="text-slate-500"> per {rate.unit?.symbol ?? 'unit'}</span>
-                    </span>
-                    <span className="tabular text-slate-900 dark:text-slate-100">
-                      {formatMoney(rate.rate)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {/* ---- Ledger ---- */}
-          <div>
-            <div className="mb-2 flex items-baseline justify-between">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Account</h3>
-              {ledger.data ? (
+        ) : party.error ? (
+          <ErrorAlert error={party.error} />
+        ) : p ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
                 <p className="text-xs text-slate-500">
-                  Billed {formatMoney(ledger.data.totalDebit)} · Received{' '}
-                  {formatMoney(ledger.data.totalCredit)}
+                  {balance.direction === 'settled' ? 'Account' : balance.phrase}
                 </p>
-              ) : null}
+                <p className={`tabular text-xl font-semibold ${balance.tone}`}>
+                  {balance.direction === 'settled' ? 'Settled up' : balance.amount}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
+                <p className="text-xs text-slate-500">Billed to date</p>
+                <p className="tabular text-xl font-semibold text-slate-900 dark:text-slate-100">
+                  {formatMoney(p.stats.totalBilled)}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {p.stats.invoiceCount} invoice{p.stats.invoiceCount === 1 ? '' : 's'}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
+                <p className="text-xs text-slate-500">Credit terms</p>
+                <p className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+                  {p.creditDays ? `${p.creditDays} days` : 'None'}
+                </p>
+                {p.creditLimit ? (
+                  <p className="text-xs text-slate-400">Limit {formatMoney(p.creditLimit)}</p>
+                ) : null}
+              </div>
             </div>
 
-            {ledger.isLoading ? (
-              <div className="flex justify-center py-6">
-                <Spinner className="h-5 w-5 text-slate-400" />
+            <div className="grid gap-4 text-sm sm:grid-cols-2">
+              <Detail label="GSTIN">
+                <span className="font-mono">{p.gstin ?? 'Unregistered'}</span>
+                {/* The state code is what decides CGST+SGST vs IGST on every bill
+                    this party is ever given, so it is always shown. */}
+                <span className="ml-2 text-xs text-slate-500">
+                  {p.stateName} ({p.stateCode})
+                </span>
+              </Detail>
+
+              <Detail label="Contact">
+                {[p.phone, p.email].filter(Boolean).join(' · ') || '—'}
+                {p.contactPerson ? (
+                  <span className="text-slate-500"> · {p.contactPerson}</span>
+                ) : null}
+              </Detail>
+
+              <Detail label="Address">
+                {[p.addressLine1, p.addressLine2, p.city, p.pincode].filter(Boolean).join(', ') ||
+                  '—'}
+              </Detail>
+
+              <Detail label="Opening balance">
+                {formatMoney(p.openingBalance)}
+                {p.openingBalanceDate ? (
+                  <span className="text-slate-500"> as at {formatDate(p.openingBalanceDate)}</span>
+                ) : null}
+              </Detail>
+            </div>
+
+            {p.partyRates.length > 0 ? (
+              <div>
+                <h3 className="mb-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Agreed rates
+                </h3>
+                <ul className="space-y-0.5 text-sm">
+                  {p.partyRates.map((rate) => (
+                    <li key={rate.id} className="flex justify-between gap-3">
+                      <span className="text-slate-700 dark:text-slate-300">
+                        {rate.product?.name ?? 'Product'}
+                        <span className="text-slate-500"> per {rate.unit?.symbol ?? 'unit'}</span>
+                      </span>
+                      <span className="tabular text-slate-900 dark:text-slate-100">
+                        {formatMoney(rate.rate)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-            ) : ledger.error ? (
-              <ErrorAlert error={ledger.error} />
-            ) : entries.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-500">
-                Nothing on the account yet.
-              </p>
-            ) : (
-              <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
-                <table className="w-full min-w-[34rem] text-sm">
-                  <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800">
-                    <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                      <th className="px-3 py-2 font-medium">Entry</th>
-                      <th className="px-2 py-2 text-right font-medium">Billed</th>
-                      <th className="px-2 py-2 text-right font-medium">Received</th>
-                      <th className="px-3 py-2 text-right font-medium">Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {entries.map((entry) => (
-                      <LedgerRow key={entry.id} entry={entry} />
-                    ))}
-                  </tbody>
-                </table>
+            ) : null}
+
+            {/* ---- Ledger ---- */}
+            <div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Account</h3>
+                {ledger.data ? (
+                  <p className="text-xs text-slate-500">
+                    Billed {formatMoney(ledger.data.totalDebit)} · Received{' '}
+                    {formatMoney(ledger.data.totalCredit)}
+                  </p>
+                ) : null}
               </div>
-            )}
+
+              {ledger.isLoading ? (
+                <div className="flex justify-center py-6">
+                  <Spinner className="h-5 w-5 text-slate-400" />
+                </div>
+              ) : ledger.error ? (
+                <ErrorAlert error={ledger.error} />
+              ) : entries.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-500">
+                  Nothing on the account yet.
+                </p>
+              ) : (
+                <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 dark:border-slate-800">
+                  <table className="w-full min-w-[34rem] text-sm">
+                    <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800">
+                      <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-2 font-medium">Entry</th>
+                        <th className="px-2 py-2 text-right font-medium">Billed</th>
+                        <th className="px-2 py-2 text-right font-medium">Received</th>
+                        <th className="px-3 py-2 text-right font-medium">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {entries.map((entry) => (
+                        <LedgerRow key={entry.id} entry={entry} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        ) : null}
+      </Dialog>
+
+      {editing && p ? (
+        <EditPartyDialog
+          party={p}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void party.refetch();
+          }}
+        />
       ) : null}
-    </Dialog>
+    </>
   );
 }
 

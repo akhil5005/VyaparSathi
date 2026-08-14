@@ -15,6 +15,7 @@ import { Dialog } from '../../components/Dialog';
 import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { AdjustStockDialog } from './AdjustStockDialog';
+import { EditProductDialog } from './EditProductDialog';
 
 /**
  * Everything about one product, and the two things you do to it: correct the
@@ -35,6 +36,7 @@ export function ProductDetailDialog({
   const canEdit = can(...CAN_EDIT_MASTERS);
   const canSeeCost = can(...CAN_SEE_COST);
   const [adjusting, setAdjusting] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const product = useQuery({
     queryKey: ['products', productId],
@@ -65,9 +67,14 @@ export function ProductDetailDialog({
         footer={
           <>
             {canEdit ? (
-              <Button variant="secondary" onClick={() => setAdjusting(true)}>
-                Adjust stock
-              </Button>
+              <>
+                <Button variant="secondary" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button variant="secondary" onClick={() => setAdjusting(true)}>
+                  Adjust stock
+                </Button>
+              </>
             ) : null}
             <Button onClick={onClose}>Close</Button>
           </>
@@ -179,6 +186,17 @@ export function ProductDetailDialog({
           </div>
         ) : null}
       </Dialog>
+
+      {editing && p ? (
+        <EditProductDialog
+          product={p}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            void product.refetch();
+          }}
+        />
+      ) : null}
 
       {adjusting && p ? (
         <AdjustStockDialog

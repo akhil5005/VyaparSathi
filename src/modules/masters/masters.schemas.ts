@@ -113,7 +113,16 @@ export const createPartySchema = z
 export const updatePartySchema = createPartySchema
   .innerType()
   .partial()
-  .extend({ isActive: z.boolean().optional() })
+  .extend({
+    isActive: z.boolean().optional(),
+    /**
+     * Explicitly null clears it — a dealer who surrendered their registration.
+     * `.partial()` can only say "not given", which is a different thing: it
+     * leaves the old GSTIN in place. Without this the UI would appear to
+     * unregister a party and silently not.
+     */
+    gstin: gstinSchema.nullable().optional(),
+  })
   // Opening balance is set once, at migration. Changing it later would silently
   // desync the ledger, so it has to go through an adjustment entry instead.
   .omit({ openingBalance: true, openingBalanceDate: true });

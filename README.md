@@ -32,9 +32,11 @@ hand in under a minute.
   used to check the tests actually catch what they claim to, and the real bugs
   that fell out of it.
 
-The API and the web app are deployed to two subdomains of one domain
-(`api.example.me` and `app.example.me`), so every browser call is genuinely
-cross-origin. That is a deliberate choice, not an accident of hosting — see
+It runs live on a single Render service that serves the API and the built web
+app from one origin. Development is deliberately *not* arranged that way — Vite
+on `:5173` calls the API on `:4000` with no dev proxy, so CORS and the refresh
+cookie are exercised every day rather than discovered on deploy day. Both
+layouts, and why the deployed one collapsed to a single origin, are in
 [Cross-origin by design](#cross-origin-by-design).
 
 ---
@@ -113,6 +115,8 @@ generates a new migration from your edits and applies it.
 | `npm run prisma:studio` | Browse the database |
 | `npm run db:seed` | Seed the paper HSN codes at 18% |
 | `npm run db:seed:catalogue` | Seed a 16-product sample range — **illustrative rates** |
+| `npm run backup:restore -- <file> --owner-password "…"` | Put a backup back into an empty database |
+| `ITEST_PATTERN="src/modules/x/*.itest.ts" npm run test:integration` | Integration tests for one module only |
 
 `npm run test:integration` needs **no setup** — `embedded-postgres` downloads
 real Postgres binaries into `node_modules` and the harness boots a throwaway
@@ -493,6 +497,81 @@ ESC/POS, for preview or client-side sending), `POST /invoices/:id/receipt`
 (actually send it), and `GET|POST|PATCH|DELETE /printers` plus
 `POST /printers/:id/test`.
 
+### GST returns — `src/modules/gstr1/`
+
+GSTR-1 for a month, in the shape the GST portal's offline utility accepts, plus
+a plain-language summary of the same month to check first. It is a **working
+paper for the CA**: nothing here talks to the portal and nothing is marked as
+filed.
+
+The file the portal wants is unreadable by design — `inum`, `txval`, `camt`, no
+recognisable invoice, amounts as bare floats — so nobody can eyeball it for a
+missing bill. Hence two endpoints: `GET /api/gstr1/summary` returns counts,
+totals and warnings for the screen, and `GET /api/gstr1/download` returns the
+payload as a file.
+
+The classification is the part that is legally wrong if it is wrong:
+
+| Supply | Section | Reported |
+|---|---|---|
+| Counterparty has a GSTIN | B2B | Invoice by invoice, grouped by their GSTIN |
+| Unregistered, inter-state, over ₹1,00,000 | B2CL | Invoice by invoice, grouped by state |
+| Everything else | B2CS | Totals per state per rate only |
+
+Cancelled invoices are excluded from every section — no supply took place — but
+still counted in `doc_issue`, because their number *was* issued and the portal
+checks the declared range against the count. A note against a purchase is the
+supplier's outward supply and never appears. A credit note against a small B2C
+sale is negated and netted into the B2CS totals rather than reported on its own,
+which is why a B2CS row can legitimately come out negative in a month of heavy
+returns.
+
+Money stays a `Decimal` throughout. The portal JSON is the only place in this
+codebase a rupee becomes a float, and it happens at the last step.
+
+Split into a pure builder (`gstr1.build.ts`, no database, no clock) and a
+service that queries, so every classification rule is unit-testable — and is
+tested, boundary by boundary.
+
+### Backups — `src/modules/backup/`
+
+The books *are* the business. A disk dies, a laptop is stolen, a free database
+tier is reclaimed, and years of ledger go with it.
+
+`GET /api/backup/download` (owner only) returns one JSON file with every
+customer, product, invoice, payment and ledger entry for the shop.
+`GET /api/backup/summary` returns the counts, shown on screen *before* the
+download — the classic backup failure is discovering on the day you need it that
+the file was empty all along.
+
+Deliberately **not** in the file: password hashes, TOTP secrets, sessions,
+refresh tokens, reset tokens. It ends up in a Downloads folder and gets emailed
+around; a backup that leaks logins is worse than no backup. Restoring therefore
+sets a fresh owner password, and other staff come back needing one set from
+Settings → Staff.
+
+Putting it back is a command rather than a button, because it is not an
+operation to make easy:
+
+```bash
+DATABASE_URL="postgresql://…" \
+  npm run backup:restore -- ./backup.json --owner-password "a new password"
+```
+
+It refuses two things: restoring over a business already in the database
+(merging a snapshot into live books duplicates invoice numbers and breaks the
+ledger), and restoring without a new owner password. Worth running once against
+a scratch database while nothing depends on it — a backup you have never
+restored is a hope, not a backup. The round trip is covered by an integration
+test that exports a shop with invoices, notes, payments and a ledger, wipes the
+database, restores from the file alone and checks the balances, stock, average
+cost and invoice numbering all still reconcile.
+
+It is a data export, not a point-in-time snapshot: rows are read across several
+queries, so a bill issued mid-export could land half in. Take it when the
+counter is quiet. `pg_dump` remains the better disaster-recovery tool where a
+shell and a connection string are available.
+
 ### The HTTP layer — `src/app.ts`
 
 Every module above is mounted under `/api`, behind `helmet`, CORS with
@@ -561,6 +640,11 @@ web/
         TotalsPanel.tsx        totals, straight from the preview endpoint
         IssuedInvoiceDialog.tsx  number, total, and the PDF
         NewCustomerDialog.tsx    add a walk-in without leaving the bill
+      account/
+        AccountPage.tsx        change your own password — every role, not just owners
+      returns/
+        Gstr1Page.tsx          the month's GSTR-1, checked before it is downloaded
+        periods.ts             which months to offer; defaults to the one being filed
       payments/
         PaymentsPage.tsx       ageing summary + three tabs
         OutstandingTable.tsx   the udhaar list, worst debtor first
@@ -751,19 +835,24 @@ tree when it sees one.
 
 ### Cross-origin by design
 
-The app and the API are on two subdomains, so every request is cross-origin and
-CORS is genuinely exercised — including in development, where Vite is on `:5173`
-and the API on `:4000`. **There is deliberately no dev proxy.** Proxying `/api`
+In development the app and the API are separate origins — Vite on `:5173`
+calling `:4000` — and **there is deliberately no dev proxy.** Proxying `/api`
 would make development same-origin and hide every CORS and cookie problem until
 deploy day.
 
-Two subdomains of one registrable domain are cross-*origin* but same-*site*, and
-that distinction is the whole reason for this layout: the refresh cookie stays
-`SameSite=Lax` and never becomes a third-party cookie. Splitting across
-unrelated hosts (`x.vercel.app` + `y.railway.app`) would force `SameSite=None`,
-which Safari blocks by default — an auth flow that fails on iPhone.
+Deployment collapsed that to a single origin, and the reason is worth writing
+down. Two subdomains of one registrable domain are cross-*origin* but
+same-*site*, so the refresh cookie stays `SameSite=Lax` and never becomes a
+third-party cookie. Splitting across unrelated hosts (`x.onrender.com` +
+`y.pages.dev`) is cross-*site*, which forces `SameSite=None` — blocked by
+default in Safari, so login would work on a laptop and fail on an iPhone. With
+no domain of its own to put both halves under, the only correct option left was
+to serve them from one process: `express.static` over `web/dist` plus an SPA
+rewrite that excludes `/api`, in `src/app.ts`.
 
-Three things this needed beyond `app.use(cors())`:
+So CORS still has to be right — it is what development runs on, and what a
+two-subdomain deployment would need the day a domain is bought. Three things it
+needed beyond `app.use(cors())`:
 
 - **`credentials: true`**, or the browser silently drops the refresh cookie and
   staying signed in stops working.
@@ -797,33 +886,33 @@ Every screen is built. The web app covers the whole trading cycle —
 **customers &amp; suppliers** with their ledgers, and **settings** — plus
 authentication and the dashboard.
 
-**Nothing is deployed yet**, which is the largest remaining gap: all of the
-above runs on a laptop. What remains:
+It is **deployed** — one Render service serving both halves from a single
+origin, which is what makes the refresh cookie first-party without a domain of
+its own. Step by step in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+GSTR-1 export and backups are built; what remains:
 
-1. **Deploy it.** Everything the repository can provide is in place — a
-   `Dockerfile`, migrations that run on boot, a `/health` check, the SPA
-   rewrite, and production env templates. What remains is account-level and
-   cannot be scripted: create the hosts, point DNS, paste the secrets. Step by
-   step in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
-2. **Backups.** None exist. These are a business's books — a lost database is
-   lost receivables.
-
-3. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
+1. **Off-site backups on a schedule.** Taking one is a button and restoring it
+   is a tested command, but somebody still has to press the button. A nightly
+   job writing to object storage is the honest version.
+2. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
    order but the ledger is served in `entryDate` order, and the two disagree
    whenever an entry is backdated. The parties screen sorts around it within a
    page; the real fix belongs in `getPartyLedger`.
-4. **GSTR-1 JSON export** — the return that currently costs the shop CA
-   fees to prepare by hand. Every input it needs (B2B/B2C split, HSN summary, credit-note
-   reporting with original invoice references) is already modelled.
-5. **Voice queries, then voice billing** — the confirmation card calls
+3. **Pagination.** Every list asks for `pageSize: 100` and stops there. Fine for
+   a first year of trading, not for a fifth.
+4. **Voice queries, then voice billing** — the confirmation card calls
    `POST /api/sales-invoices/preview`, which already exists. Needs an Anthropic
    key and a Sarvam key; nothing in the codebase touches them until then.
-6. **E-way bill** generation against the NIC portal via a GSP. Requires a
+5. **E-way bill** generation against the NIC portal via a GSP. Requires a
    commercial GSP account before it can be verified against anything real.
+6. **Freight is added after tax.** On a composite supply of goods, freight
+   normally takes the rate of the goods it carries. Changing it would not touch
+   bills already issued, so GSTR-1 raises a warning naming the invoices rather
+   than quietly adjusting a legal document after the fact.
 
 ## Test coverage
 
-**395 tests, all green** — 264 unit + 131 integration.
+**462 tests, all green** — 293 unit + 169 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 

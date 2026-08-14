@@ -31,7 +31,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "db:seed:catalogue": "tsx prisma/seed-catalogue.ts"
+    "db:seed:catalogue": "tsx prisma/seed-catalogue.ts",
+    "backup:restore": "tsx scripts/restore-backup.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",

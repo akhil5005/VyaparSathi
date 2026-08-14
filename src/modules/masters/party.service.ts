@@ -158,9 +158,22 @@ export async function updateParty(
   // Re-derive placement only when the GSTIN or state code is actually changing.
   let placement: { stateCode: string; stateName: string | null; pan: string | null } | null = null;
   if (patch.gstin !== undefined || patch.stateCode !== undefined) {
+    // `gstin: null` means "they are no longer registered", which is not the
+    // same as leaving it out. In that case the state can no longer be derived
+    // from the number, so it has to come from the patch or from what is
+    // already on the party.
+    const clearingGstin = patch.gstin === null;
     placement = resolveStatePlacement({
-      gstin: patch.gstin ?? party.gstin ?? undefined,
-      stateCode: patch.stateCode ?? (patch.gstin ? undefined : party.stateCode),
+      ...(clearingGstin ? {} : { gstin: patch.gstin ?? party.gstin ?? undefined }),
+      // A state code given *alongside* a GSTIN is passed through rather than
+      // dropped, so a contradiction between the two is rejected here exactly as
+      // it is on create. Silently preferring the GSTIN would reach the right
+      // answer while hiding the fact that the caller believed something else.
+      ...(patch.stateCode !== undefined
+        ? { stateCode: patch.stateCode }
+        : clearingGstin || !patch.gstin
+          ? { stateCode: party.stateCode }
+          : {}),
     });
   }
 
@@ -178,7 +191,12 @@ export async function updateParty(
     where: { id: partyId },
     data: {
       ...rest,
-      ...(patch.gstin !== undefined ? { gstin: patch.gstin } : {}),
+      ...(patch.gstin !== undefined
+        ? {
+            gstin: patch.gstin,
+            ...(patch.gstin === null ? { gstRegistrationType: 'UNREGISTERED' as const } : {}),
+          }
+        : {}),
       ...(placement
         ? { stateCode: placement.stateCode, stateName: placement.stateName, pan: placement.pan }
         : {}),
