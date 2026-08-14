@@ -143,7 +143,13 @@ runs automatically yet; somebody has to do it.
 
 ## Forgotten passwords
 
-Two paths, and the second is the one that works without any external setup.
+**On a deployment with no `RESEND_API_KEY`, the "forgot password" link cannot
+send anything to anybody.** That is the default state, and it is worth knowing
+before someone needs it rather than after. The screen says so plainly — it
+checks whether the server has a delivery channel at all and, when it does not,
+points at the paths below instead of telling the person to check an inbox.
+
+Three paths. The first works today with nothing configured.
 
 **Owner sets it.** Settings → Staff → **Set password**. Available today, needs
 nothing configured. The password is shown rather than masked so the owner can
@@ -152,12 +158,32 @@ point, since the reason for a reset is often that someone else knows the old
 one. An owner cannot set another owner's password, or their own; changing your
 own goes through **change password**, which demands the current one.
 
+**The owner's own password: `npm run set-password`.** Nobody can reset the
+owner — that is the whole point of the paragraph above, and it cuts both ways.
+An owner who forgets their password, on a shop with no mail provider or with no
+email address on the account, would otherwise be locked out of the business's
+own books for good. So:
+
+```bash
+DATABASE_URL="postgresql://…" \
+  npm run set-password -- --user 9876500001 --password "a new password"
+```
+
+It matches the account the same way the login screen does — phone or email —
+signs that user out of every device, and writes an audit entry recording that
+the change came from the command line. It is deliberately not an HTTP endpoint:
+anyone who can run it already holds the database connection string and could do
+anything at all, so it grants nothing new. An endpoint would.
+
 **Emailed reset link.** Set `RESEND_API_KEY` and `MAIL_FROM` and the "forgot
-password" flow emails a one-time link that expires in 30 minutes. Two caveats:
-Resend needs a verified sending domain before it will deliver to arbitrary
-recipients, and staff who sign in with only a phone number have no address to
-send to. Without these variables the link is logged and delivered nowhere — the
-server says so loudly at startup and on every attempt, rather than pretending.
+password" flow emails a one-time link that expires in 30 minutes. Two caveats,
+and the second catches people out: Resend needs a verified sending domain
+before it will deliver to arbitrary recipients, and **an account with no email
+address cannot be reached at all** — registration only asks for a phone number,
+so this is the common case rather than the exception. Anyone can add one to
+their own account under **My account**, and an account without one is warned
+there. Without the two variables the link is logged and delivered nowhere; the
+server says so at startup, on every attempt, and now on the screen itself.
 
 **Why not SMS.** Reaching an Indian mobile requires DLT registration under the
 TRAI mandate: the sender ID and every message template must be registered with

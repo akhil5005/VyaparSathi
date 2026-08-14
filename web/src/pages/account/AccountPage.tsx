@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../auth/AuthProvider';
 import { roleLabel } from '../../auth/RequireAuth';
+import type { User } from '../../lib/types';
 import { Button } from '../../components/Button';
 import { Field } from '../../components/Field';
 import { Alert, ErrorAlert } from '../../components/Alert';
@@ -90,6 +91,8 @@ export function AccountPage() {
         </p>
       </section>
 
+      <ContactDetails />
+
       <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
           Change your password
@@ -143,6 +146,101 @@ export function AccountPage() {
         </Button>
       </form>
     </div>
+  );
+}
+
+/**
+ * Your name and email.
+ *
+ * The email is not decoration — it is the only channel a password reset can
+ * currently reach, because SMS in India needs DLT registration before a single
+ * message can be sent. An account with no email address cannot be reset at all.
+ *
+ * For staff that is inconvenient: the owner sets them a new password from
+ * Settings → Staff. For the **owner** it is a trap, because nobody can do that
+ * for the owner — a forgotten password with no email on the account means the
+ * shop is locked out of its own books until somebody goes to the database. So
+ * an owner without one is told, here, in as many words.
+ */
+function ContactDetails() {
+  const { user, reload } = useAuth();
+
+  const [fullName, setFullName] = useState(user?.fullName ?? '');
+  const [email, setEmail] = useState(user?.email ?? '');
+  const [saved, setSaved] = useState(false);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.patch<{ user: User }>('/api/auth/me', {
+        fullName: fullName.trim(),
+        // Explicitly null when blank — omitting it would mean "leave it", and
+        // clearing an address would silently do nothing.
+        email: email.trim() || null,
+      }),
+    async onSuccess() {
+      setSaved(true);
+      await reload();
+    },
+  });
+
+  const fieldErrors = save.error instanceof ApiError ? save.error.fieldErrors : {};
+  const changed = fullName.trim() !== (user?.fullName ?? '') || email.trim() !== (user?.email ?? '');
+  const noEmail = !user?.email;
+
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    setSaved(false);
+    if (changed && fullName.trim().length >= 2) save.mutate();
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-4" noValidate>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Your details</h2>
+
+      <ErrorAlert error={save.error} />
+      {saved && !changed ? <Alert tone="success">Saved.</Alert> : null}
+
+      {noEmail ? (
+        <Alert tone="warning" title="No email on this account">
+          {user?.role === 'OWNER'
+            ? 'You cannot reset your own password without one, and nobody else can reset the owner. Add an email now, while you still know the password.'
+            : 'Password reset cannot reach you without one. Until then, ask the owner to set you a new password from Settings → Staff.'}
+        </Alert>
+      ) : null}
+
+      <Field
+        label="Full name"
+        value={fullName}
+        onChange={(e) => setFullName(e.target.value)}
+        error={fieldErrors['fullName']}
+        required
+      />
+
+      <Field
+        label="Email"
+        type="email"
+        autoComplete="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        error={fieldErrors['email']}
+        hint="Where a password reset link would be sent"
+        placeholder="you@example.com"
+      />
+
+      <p className="text-xs text-slate-500">
+        Your phone number ({user?.phone}) and your role are the owner's to change, from
+        Settings → Staff.
+      </p>
+
+      <Button
+        type="submit"
+        variant="secondary"
+        loading={save.isPending}
+        disabled={!changed || fullName.trim().length < 2}
+      >
+        Save details
+      </Button>
+    </form>
   );
 }
 

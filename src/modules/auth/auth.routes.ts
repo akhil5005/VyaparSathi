@@ -21,6 +21,7 @@ export function createAuthRouter(limiters: Limiters = buildLimiters(true)): Rout
 
   // ---- Authenticated ----
   authRouter.get('/me', authenticate, controller.me);
+  authRouter.patch('/me', authenticate, controller.updateMe);
   authRouter.post('/change-password', authenticate, controller.changePassword);
   authRouter.post('/logout-all', authenticate, controller.logoutAll);
   authRouter.get('/sessions', authenticate, controller.listSessions);

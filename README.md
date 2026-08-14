@@ -116,6 +116,7 @@ generates a new migration from your edits and applies it.
 | `npm run db:seed` | Seed the paper HSN codes at 18% |
 | `npm run db:seed:catalogue` | Seed a 16-product sample range — **illustrative rates** |
 | `npm run backup:restore -- <file> --owner-password "…"` | Put a backup back into an empty database |
+| `npm run set-password -- --user <phone> --password "…"` | Last-resort password reset — the only recovery an owner has |
 | `ITEST_PATTERN="src/modules/x/*.itest.ts" npm run test:integration` | Integration tests for one module only |
 
 `npm run test:integration` needs **no setup** — `embedded-postgres` downloads

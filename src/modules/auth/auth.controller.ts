@@ -13,6 +13,7 @@ import {
   registerSchema,
   resetPasswordSchema,
   setUserPasswordSchema,
+  updateOwnProfileSchema,
   updateUserSchema,
 } from './auth.schemas.js';
 
@@ -106,6 +107,13 @@ export const me = handler(async (req, res) => {
   res.json(await authService.getProfile(req.auth!.userId));
 });
 
+export const updateMe = handler(async (req, res) => {
+  const patch = updateOwnProfileSchema.parse(req.body);
+  res.json({
+    user: await authService.updateOwnProfile(req.auth!.userId, patch, contextOf(req)),
+  });
+});
+
 export const changePassword = handler(async (req, res) => {
   const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
   await authService.changePassword(req.auth!.userId, currentPassword, newPassword, contextOf(req));
@@ -146,10 +154,21 @@ export const forgotPassword = handler(async (req, res) => {
     }
   }
 
+  /**
+   * Whether this deployment can deliver at all is a property of the *server*,
+   * not of any account, so saying it leaks nothing — and not saying it is a
+   * lie. Without a notifier configured the message below is false for
+   * everyone, and the person sits refreshing an inbox that will never receive
+   * anything. The screen uses this to point them at the owner instead.
+   */
   // Identical response either way — otherwise this endpoint tells an attacker
   // which phone numbers have accounts.
+  const canDeliver = notifier.name !== 'console';
   res.json({
-    message: 'If that account exists, a reset link has been sent.',
+    message: canDeliver
+      ? 'If that account exists, a reset link has been sent.'
+      : 'This shop has no email delivery set up, so no link can be sent.',
+    deliveryConfigured: canDeliver,
   });
 });
 

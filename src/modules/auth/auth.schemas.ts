@@ -88,6 +88,16 @@ export const setUserPasswordSchema = z.object({
   newPassword: passwordSchema,
 });
 
+/**
+ * Your own profile. Note `email` is nullable: an explicitly null clears it,
+ * which `.optional()` alone cannot express — omitting a field means "leave it",
+ * a different thing entirely.
+ */
+export const updateOwnProfileSchema = z.object({
+  fullName: z.string().trim().min(2).max(120).optional(),
+  email: z.string().trim().email().nullable().optional(),
+});
+
 export const updateUserSchema = z.object({
   fullName: z.string().trim().min(2).max(120).optional(),
   role: z.nativeEnum(UserRole).optional(),

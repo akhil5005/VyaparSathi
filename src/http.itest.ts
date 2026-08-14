@@ -387,6 +387,135 @@ describe('HTTP API', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Forgotten passwords
+  // -------------------------------------------------------------------------
+
+  describe('password reset', () => {
+    it('answers the same for a real account and an invented one', async () => {
+      const registration = registrationPayload();
+      await client.post('/api/auth/register', registration);
+
+      const real = await client.post('/api/auth/forgot-password', {
+        identifier: registration.owner.phone,
+      });
+      const invented = await client.post('/api/auth/forgot-password', {
+        identifier: '5550000000',
+      });
+
+      // Any difference here — status, body, even wording — turns this endpoint
+      // into a way to discover which phone numbers belong to real shops.
+      assert.equal(real.status, invented.status);
+      assert.deepEqual(real.body, invented.body);
+    });
+
+    it('says plainly that no link can be sent when delivery is not configured', async () => {
+      const registration = registrationPayload();
+      await client.post('/api/auth/register', registration);
+
+      const response = await client.post('/api/auth/forgot-password', {
+        identifier: registration.owner.phone,
+      });
+
+      // The tests run without RESEND_API_KEY, which is also the state of every
+      // deployment until somebody configures one. Claiming "a link has been
+      // sent" leaves the person waiting for something never sent.
+      assert.equal(response.status, 200);
+      assert.equal(response.body.deliveryConfigured, false);
+      assert.match(response.body.message, /no email delivery/i);
+    });
+
+    it('still records a token, so configuring delivery later needs no other change', async () => {
+      const registration = registrationPayload();
+      await client.post('/api/auth/register', registration);
+      await client.post('/api/auth/forgot-password', { identifier: registration.owner.phone });
+
+      assert.equal(await prisma.passwordResetToken.count(), 1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Your own profile
+  // -------------------------------------------------------------------------
+
+  describe('own profile', () => {
+    /** Signs in a phone-only clerk, which is the normal shape at a counter. */
+    async function withClerk() {
+      const registration = registrationPayload();
+      const registered = await client.post('/api/auth/register', registration);
+      client.authenticateAs(registered.body.accessToken);
+
+      const staff = await client.post('/api/auth/users', {
+        fullName: 'Counter Clerk',
+        phone: nextPhone(),
+        password: 'clerk-password-long',
+        role: 'BILLING_STAFF',
+      });
+      assert.equal(staff.status, 201, JSON.stringify(staff.body));
+
+      const signedIn = await client.post('/api/auth/login', {
+        identifier: staff.body.user.phone,
+        password: 'clerk-password-long',
+      });
+      client.authenticateAs(signedIn.body.accessToken);
+
+      return { registration, staff: staff.body.user };
+    }
+
+    it('adds an email to an account that had none — the only way reset can reach it', async () => {
+      const { staff } = await withClerk();
+      assert.equal(staff.email, null);
+
+      const updated = await client.patch('/api/auth/me', { email: 'clerk@example.com' });
+      assert.equal(updated.status, 200, JSON.stringify(updated.body));
+      assert.equal(updated.body.user.email, 'clerk@example.com');
+
+      const me = await client.get('/api/auth/me');
+      assert.equal(me.body.user.email, 'clerk@example.com');
+    });
+
+    it('clears an email when null is sent, and leaves it alone when omitted', async () => {
+      const registration = registrationPayload();
+      const registered = await client.post('/api/auth/register', registration);
+      client.authenticateAs(registered.body.accessToken);
+
+      const renamed = await client.patch('/api/auth/me', { fullName: 'Akhil K Mittal' });
+      assert.equal(renamed.body.user.fullName, 'Akhil K Mittal');
+      assert.equal(
+        renamed.body.user.email,
+        registration.owner.email,
+        'an omitted email must survive',
+      );
+
+      const cleared = await client.patch('/api/auth/me', { email: null });
+      assert.equal(cleared.body.user.email, null);
+    });
+
+    it('will not let you promote yourself', async () => {
+      const { staff } = await withClerk();
+
+      await client.patch('/api/auth/me', { fullName: 'Clerk', role: 'OWNER', isActive: true });
+
+      // Unknown keys are stripped by the schema rather than rejected, so what
+      // matters is what actually landed in the database.
+      const after = await prisma.user.findUniqueOrThrow({ where: { id: staff.id } });
+      assert.equal(after.role, 'BILLING_STAFF');
+    });
+
+    it('refuses an email another user in the same shop already has', async () => {
+      const { registration } = await withClerk();
+
+      const clash = await client.patch('/api/auth/me', { email: registration.owner.email });
+      assert.equal(clash.status, 409, JSON.stringify(clash.body));
+    });
+
+    it('needs a session', async () => {
+      client.authenticateAs(undefined);
+      const anonymous = await client.patch('/api/auth/me', { fullName: 'Nobody' });
+      assert.equal(anonymous.status, 401);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Role gates
   // -------------------------------------------------------------------------
 

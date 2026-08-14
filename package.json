@@ -32,7 +32,8 @@
     "prisma:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:catalogue": "tsx prisma/seed-catalogue.ts",
-    "backup:restore": "tsx scripts/restore-backup.ts"
+    "backup:restore": "tsx scripts/restore-backup.ts",
+    "set-password": "tsx scripts/set-password.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",

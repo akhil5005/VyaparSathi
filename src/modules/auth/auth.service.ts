@@ -807,6 +807,71 @@ export async function updateUser(
   return sanitizeUser(updated);
 }
 
+/**
+ * A user maintaining their own name and email.
+ *
+ * The email is the point. Password reset can only reach an account that has
+ * one — an account with only a phone number has no delivery channel at all
+ * while SMS is blocked behind DLT registration. For staff that is survivable,
+ * because the owner can set their password from Settings → Staff. For the
+ * **owner** it is not: nobody can reset the owner, so an owner with no email
+ * and a forgotten password locks the shop out of its own books entirely.
+ *
+ * Deliberately narrow. Role and active status are the owner's to change, not
+ * your own, or any billing clerk could promote themselves.
+ */
+export async function updateOwnProfile(
+  userId: string,
+  patch: { fullName?: string; email?: string | null },
+  ctx: RequestContext,
+) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw notFound('User not found');
+
+  if (patch.email) {
+    const clash = await prisma.user.findFirst({
+      where: {
+        businessId: user.businessId,
+        email: { equals: patch.email, mode: 'insensitive' },
+        id: { not: userId },
+      },
+      select: { id: true },
+    });
+    if (clash) throw conflict('Someone else in this shop already uses that email');
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(patch.fullName !== undefined ? { fullName: patch.fullName } : {}),
+      ...(patch.email !== undefined
+        ? {
+            email: patch.email,
+            // A changed address has not been proved to belong to them, and the
+            // old verification certainly does not carry over.
+            emailVerifiedAt: null,
+          }
+        : {}),
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      businessId: user.businessId,
+      userId,
+      action: 'user.self_update',
+      entityType: 'User',
+      entityId: userId,
+      before: { fullName: user.fullName, email: user.email },
+      after: { fullName: updated.fullName, email: updated.email },
+      ipAddress: ctx.ipAddress ?? null,
+      userAgent: ctx.userAgent ?? null,
+    },
+  });
+
+  return sanitizeUser(updated);
+}
+
 export async function getProfile(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
