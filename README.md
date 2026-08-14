@@ -892,8 +892,11 @@ its own. Step by step in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 GSTR-1 export and backups are built; what remains:
 
 1. **Off-site backups on a schedule.** Taking one is a button and restoring it
-   is a tested command, but somebody still has to press the button. A nightly
-   job writing to object storage is the honest version.
+   is a tested command, but somebody still has to press the button. That matters
+   more than it sounds: the managed database's free tier keeps a six-hour
+   restore window, so a mistake noticed the next morning is already past it and
+   a downloaded copy is the only way back. A nightly job writing to object
+   storage is the honest version.
 2. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
    order but the ledger is served in `entryDate` order, and the two disagree
    whenever an entry is backdated. The parties screen sorts around it within a

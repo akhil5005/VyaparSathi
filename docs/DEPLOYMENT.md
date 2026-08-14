@@ -42,8 +42,15 @@ postgresql://user:pass@ep-xxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=requir
 That is a real secret. It goes into Render's environment settings and nowhere
 else.
 
-Neon's free tier keeps a 7-day history you can restore from. That is a floor,
-not a backup strategy — see [Backups](#4-backups).
+Neon's free tier keeps a **6-hour** history window you can restore from — the
+slider in *Settings → History window* stops there, and 30 days is a paid
+feature. Six hours is not a floor you can build on: a bad delete on Monday
+afternoon, noticed on Tuesday morning, is already past it. Treat Neon's history
+as protection against Neon losing data and nothing else, and read
+[Backups](#4-backups) as the actual recovery plan.
+
+*(Check the console rather than trusting this line — an earlier version of this
+document claimed 7 days, which was wrong, and free-tier limits move.)*
 
 ---
 
@@ -104,14 +111,33 @@ JSON.
 ## 4. Backups
 
 Neon's history protects against Neon losing data. It does not protect against a
-bad delete, and it lives with the same provider. Keep a copy elsewhere:
+bad delete, it lives with the same provider, and on the free tier it reaches
+back only six hours. Anything older than that has exactly one recovery path:
+a copy you took yourself.
+
+**From the app, which is what will actually get used.** Settings → Backup →
+*Download backup*, owner only. One JSON file with every customer, product, bill,
+payment and ledger entry. The counts are shown before the download so an empty
+backup cannot be mistaken for a good one. Putting it back:
+
+```bash
+DATABASE_URL="<empty database>" \
+  npm run backup:restore -- ./backup.json --owner-password "a new password"
+```
+
+Password hashes are deliberately not in the file, which is why restoring sets a
+fresh owner password. Details in the README under **Backups**.
+
+**Or `pg_dump`, where a shell and a client are available.** A true
+point-in-time dump rather than a read across several queries:
 
 ```bash
 pg_dump "$DATABASE_URL" --no-owner --format=custom > vyapar-$(date +%F).dump
 ```
 
-Run it on a schedule; put the file somewhere else entirely. Restore it once to
-prove it works — a backup nobody has restored is a hypothesis.
+Either way: on a schedule, stored somewhere that is not Neon, and restored once
+to prove it works — a backup nobody has restored is a hypothesis. Nothing here
+runs automatically yet; somebody has to do it.
 
 ---
 
