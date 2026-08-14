@@ -11,7 +11,15 @@ import {
 } from '../../lib/tokens.js';
 import { validateGstin } from '../../lib/gstin.js';
 import { currentFinancialYear } from '../../lib/financialYear.js';
-import { badRequest, conflict, forbidden, notFound, tooManyRequests, unauthorized } from '../../lib/errors.js';
+import {
+  badRequest,
+  badRequestCoded,
+  conflict,
+  forbidden,
+  notFound,
+  tooManyRequests,
+  unauthorized,
+} from '../../lib/errors.js';
 import type { CreateUserInput, LoginInput, RegisterInput } from './auth.schemas.js';
 
 export interface RequestContext {
@@ -563,10 +571,12 @@ export async function requestPasswordReset(
   const token = generateOpaqueToken(32);
 
   await prisma.$transaction([
-    // Only the newest reset link should work.
+    // Only the newest reset link should work. Recorded as supersession rather
+    // than use, so the screen can tell someone holding the older email that a
+    // newer one exists instead of implying their link simply broke.
     prisma.passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
-      data: { usedAt: new Date() },
+      where: { userId: user.id, usedAt: null, supersededAt: null },
+      data: { supersededAt: new Date() },
     }),
     prisma.passwordResetToken.create({
       data: {
@@ -591,8 +601,41 @@ export async function resetPassword(
     include: { user: true },
   });
 
-  if (!record || record.usedAt || record.expiresAt <= new Date()) {
-    throw badRequest('This reset link is invalid or has expired');
+  /**
+   * Four ways a link fails, and they are not interchangeable.
+   *
+   * "Invalid or has expired" covered all of them and told the reader nothing:
+   * whether to open a different email, request a new link, or stop because
+   * their password already changed. Worse, an unrecognised token is what you
+   * get when a link points at the wrong deployment — which happened, and the
+   * single message hid it for hours.
+   *
+   * Ordered so the most specific answer wins. Unrecognised is deliberately
+   * last-resort wording: it says nothing about whether the account exists.
+   */
+  if (!record) {
+    throw badRequestCoded(
+      'RESET_TOKEN_UNKNOWN',
+      'This reset link is not recognised. Check you opened the most recent email, and that the link was not cut short by your mail app.',
+    );
+  }
+  if (record.usedAt) {
+    throw badRequestCoded(
+      'RESET_TOKEN_USED',
+      'This link has already been used to change the password. Sign in with the new one, or ask for another link.',
+    );
+  }
+  if (record.supersededAt) {
+    throw badRequestCoded(
+      'RESET_TOKEN_SUPERSEDED',
+      'A newer reset link was requested after this one, which replaced it. Open the most recent email instead.',
+    );
+  }
+  if (record.expiresAt <= new Date()) {
+    throw badRequestCoded(
+      'RESET_TOKEN_EXPIRED',
+      `This link has expired — they last ${PASSWORD_RESET_TTL_MINUTES} minutes. Request a new one.`,
+    );
   }
 
   const passwordHash = await hashPassword(newPassword);

@@ -13,6 +13,17 @@ export class AppError extends Error {
 export const badRequest = (message: string, details?: unknown) =>
   new AppError(400, 'BAD_REQUEST', message, details);
 
+/**
+ * A 400 that carries its own code.
+ *
+ * Most validation failures are interchangeable to the caller — the message is
+ * the whole content. A few are not: a reset link that expired, one retired by a
+ * newer request, and one that was never real all need different advice, and a
+ * screen cannot pick between them by reading English prose.
+ */
+export const badRequestCoded = (code: string, message: string, details?: unknown) =>
+  new AppError(400, code, message, details);
+
 export const unauthorized = (message = 'Authentication required') =>
   new AppError(401, 'UNAUTHORIZED', message);
 

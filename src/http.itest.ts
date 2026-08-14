@@ -424,6 +424,108 @@ describe('HTTP API', () => {
       assert.match(response.body.message, /no email delivery/i);
     });
 
+    /**
+     * Each way a link dies gets its own code, because the advice differs:
+     * open a different email, ask for a new one, or stop because the password
+     * already changed. One shared "invalid or expired" told the reader none of
+     * that — and it is also what a link pointing at the wrong deployment
+     * produces, which is how that fault stayed hidden for hours.
+     */
+    describe('says which way the link failed', () => {
+      /** Registers a shop and returns a live reset token for its owner. */
+      async function freshToken() {
+        const registration = registrationPayload();
+        await client.post('/api/auth/register', registration);
+        await client.post('/api/auth/forgot-password', {
+          identifier: registration.owner.phone,
+        });
+
+        // The raw token only ever exists in the email, so the test mints its
+        // own alongside a known hash rather than trying to intercept one.
+        const { createHash, randomBytes } = await import('node:crypto');
+        const raw = randomBytes(32).toString('base64url');
+        const user = await prisma.user.findFirstOrThrow({
+          where: { phone: registration.owner.phone },
+        });
+        const record = await prisma.passwordResetToken.create({
+          data: {
+            userId: user.id,
+            tokenHash: createHash('sha256').update(raw).digest('hex'),
+            expiresAt: new Date(Date.now() + 30 * 60_000),
+          },
+        });
+
+        return { raw, record, registration, user };
+      }
+
+      const redeem = (token: string) =>
+        client.post('/api/auth/reset-password', {
+          token,
+          newPassword: 'a-brand-new-passphrase',
+        });
+
+      it('a token nobody issued is UNKNOWN, not "expired"', async () => {
+        const response = await redeem('a-token-that-was-never-issued');
+        assert.equal(response.status, 400);
+        assert.equal(response.body.error.code, 'RESET_TOKEN_UNKNOWN');
+      });
+
+      it('a link retired by a newer request is SUPERSEDED, not "used"', async () => {
+        const { raw, registration } = await freshToken();
+
+        // Asking again is what retires it — the exact trap that sends someone
+        // back to an older email.
+        await client.post('/api/auth/forgot-password', {
+          identifier: registration.owner.phone,
+        });
+
+        const response = await redeem(raw);
+        assert.equal(response.body.error.code, 'RESET_TOKEN_SUPERSEDED');
+        assert.match(response.body.error.message, /most recent email/i);
+      });
+
+      it('a link already spent is USED', async () => {
+        const { raw } = await freshToken();
+
+        const first = await redeem(raw);
+        assert.equal(first.status, 200, JSON.stringify(first.body));
+
+        const second = await redeem(raw);
+        assert.equal(second.body.error.code, 'RESET_TOKEN_USED');
+      });
+
+      it('a link past its half hour is EXPIRED', async () => {
+        const { raw, record } = await freshToken();
+        await prisma.passwordResetToken.update({
+          where: { id: record.id },
+          data: { expiresAt: new Date(Date.now() - 60_000) },
+        });
+
+        const response = await redeem(raw);
+        assert.equal(response.body.error.code, 'RESET_TOKEN_EXPIRED');
+        assert.match(response.body.error.message, /expired/i);
+      });
+
+      it('never says whether the account exists', async () => {
+        const { raw, registration } = await freshToken();
+        await client.post('/api/auth/forgot-password', {
+          identifier: registration.owner.phone,
+        });
+
+        const superseded = await redeem(raw);
+        const unknown = await redeem('a-token-that-was-never-issued');
+
+        // Both name a *link* problem. Neither names a person, an address or an
+        // account, which is what the uniform request response protects.
+        for (const body of [superseded.body, unknown.body]) {
+          const message = String(body.error.message);
+          assert.ok(!message.includes(registration.owner.phone));
+          assert.ok(!message.includes(registration.owner.email));
+          assert.ok(!/account (exists|not found)/i.test(message));
+        }
+      });
+    });
+
     it('still records a token, so configuring delivery later needs no other change', async () => {
       const registration = registrationPayload();
       await client.post('/api/auth/register', registration);
@@ -1004,7 +1106,7 @@ describe('HTTP rate limiting', () => {
     });
     assert.notEqual(redeem.status, 429, 'redeeming must have its own budget');
     assert.equal(redeem.status, 400);
-    assert.match(redeem.body.error.message, /invalid or has expired/i);
+    assert.equal(redeem.body.error.code, 'RESET_TOKEN_UNKNOWN');
   });
 
   it('still limits brute force against the reset link itself', async () => {

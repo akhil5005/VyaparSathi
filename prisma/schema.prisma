@@ -323,7 +323,16 @@ model PasswordResetToken {
   /// SHA-256 of the token sent by email/SMS.
   tokenHash String    @unique
   expiresAt DateTime
+  /// Set when the link was actually redeemed to change a password.
   usedAt    DateTime?
+  /// Set when a newer link was requested, which retires this one unredeemed.
+  ///
+  /// Deliberately separate from usedAt. Both make a link stop working, but they
+  /// are different events and the person holding the link needs different
+  /// advice: "you already changed your password" versus "you asked again, open
+  /// the newest email". Collapsing them into one column produced a screen that
+  /// could only say "invalid or expired" for either.
+  supersededAt DateTime?
   ipAddress String?
   createdAt DateTime  @default(now())
 
