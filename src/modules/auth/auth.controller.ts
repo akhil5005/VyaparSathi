@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from 'express';
-import { env, isProduction } from '../../config/env.js';
+import { appUrl, env, isProduction } from '../../config/env.js';
 import { unauthorized } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { notifier } from '../../lib/notifier.js';
@@ -128,12 +128,22 @@ export const forgotPassword = handler(async (req, res) => {
 
   if (result) {
     /**
-     * `APP_URL` is the frontend's origin. In a single-origin deployment the
-     * frontend is this same server, so fall back to the request's own host
-     * rather than sending a link to wherever APP_URL happened to be left
-     * pointing — a reset link to the wrong host is a reset link to nowhere.
+     * Where the link points.
+     *
+     * `appUrl` is the frontend's origin when there genuinely is a separate one
+     * — the Vite dev server, or a two-host deployment. On a single-origin
+     * deployment it is undefined and the link is built from the host the
+     * request actually arrived on, which cannot be wrong by construction.
+     *
+     * This line looked like this before and did not work, because `APP_URL`
+     * carried a default of `http://localhost:5173`: the fallback could never
+     * run, and a deployment that never set the variable emailed every reset
+     * link pointing at the recipient's own machine. The link opened a local
+     * dev server, queried a different database, and reported the token as
+     * invalid — while the real one sat untouched on the server. The default is
+     * gone; see config/env.ts.
      */
-    const base = env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    const base = appUrl ?? `${req.protocol}://${req.get('host')}`;
 
     const delivery = await notifier.sendPasswordReset({
       to: result.user.email ?? result.user.phone,

@@ -4,9 +4,22 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
-  /// Where the frontend lives. Used for links in emails and as the default
-  /// CORS origin.
-  APP_URL: z.string().url().default('http://localhost:5173'),
+  /**
+   * Where the frontend lives. Used for links in emails and as the default CORS
+   * origin.
+   *
+   * **No default.** It used to default to `http://localhost:5173`, which was
+   * convenient in development and quietly catastrophic in production: a
+   * deployment that never set it emailed every password reset link pointing at
+   * localhost. The link opened the developer's own machine, hit a different
+   * database, and reported "this reset link is invalid or has expired" — while
+   * the real token sat unused on the server, looking perfectly healthy.
+   *
+   * Left unset, `appUrl` below falls back to the host the request arrived on,
+   * which is right for a single-origin deployment and cannot point somewhere
+   * the user is not.
+   */
+  APP_URL: z.string().url().optional(),
   /**
    * Extra browser origins allowed to call this API, comma-separated.
    *
@@ -67,6 +80,33 @@ export const env = parsed.data;
 export const isProduction = env.NODE_ENV === 'production';
 
 /**
+ * The frontend's origin, or undefined when the request should decide.
+ *
+ * Development keeps the old convenience — Vite is on 5173 and the API on 4000,
+ * so there is a real second origin and guessing it from the request would be
+ * wrong. Production gets no guess at all: either it is configured, or the link
+ * is built from the host the browser actually reached.
+ */
+export function resolveAppUrl(
+  configured: string | undefined,
+  production: boolean,
+): string | undefined {
+  return configured ?? (production ? undefined : 'http://localhost:5173');
+}
+
+export const appUrl: string | undefined = resolveAppUrl(env.APP_URL, isProduction);
+
+if (isProduction && appUrl && /localhost|127\.0\.0\.1/.test(appUrl)) {
+  // Nothing good comes of this, and it is invisible until someone follows a
+  // link — so say it at boot, where it will be seen in the deploy log.
+  console.warn(
+    `APP_URL is set to "${appUrl}" in production. Every emailed link will point ` +
+      'at the machine of whoever opens it. Set it to the public URL, or unset it and ' +
+      'let links be built from the request host.',
+  );
+}
+
+/**
  * Every browser origin allowed to call the API, deduplicated.
  *
  * An origin is scheme + host + port and nothing more — a trailing slash or a
@@ -75,8 +115,10 @@ export const isProduction = env.NODE_ENV === 'production';
  */
 export const allowedOrigins: string[] = [
   ...new Set(
-    [env.APP_URL, ...(env.CORS_ORIGINS?.split(',') ?? [])]
-      .map((value) => value.trim().replace(/\/+$/, ''))
+    [appUrl, ...(env.CORS_ORIGINS?.split(',') ?? [])]
+      // appUrl is undefined on a single-origin deployment, where there is no
+      // cross-origin caller to allow in the first place.
+      .map((value) => (value ?? '').trim().replace(/\/+$/, ''))
       .filter(Boolean),
   ),
 ];
