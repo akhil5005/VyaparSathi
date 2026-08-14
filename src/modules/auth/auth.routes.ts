@@ -17,7 +17,8 @@ export function createAuthRouter(limiters: Limiters = buildLimiters(true)): Rout
   authRouter.post('/refresh', limiters.auth, controller.refresh);
   authRouter.post('/logout', controller.logout);
   authRouter.post('/forgot-password', limiters.passwordReset, controller.forgotPassword);
-  authRouter.post('/reset-password', limiters.passwordReset, controller.resetPassword);
+  // A separate budget from requesting one, deliberately — see rateLimit.ts.
+  authRouter.post('/reset-password', limiters.passwordResetConfirm, controller.resetPassword);
 
   // ---- Authenticated ----
   authRouter.get('/me', authenticate, controller.me);

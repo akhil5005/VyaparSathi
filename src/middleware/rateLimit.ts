@@ -54,14 +54,53 @@ export const authLimiter = () =>
     ),
   });
 
-/// Password reset is expensive (sends SMS/email) and enumerable — keep it tight.
+/**
+ * *Asking* for a reset link.
+ *
+ * Expensive — it sends a real email — and enumerable, since the identifier is
+ * chosen by the caller. Keyed on IP alone rather than IP + identifier, because
+ * enumeration works by varying the identifier: giving each new one a fresh
+ * budget would defeat the whole point.
+ */
 export const passwordResetLimiter = () =>
   rateLimit({
     windowMs: 60 * 60_000,
     limit: 5,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    message: jsonError('TOO_MANY_REQUESTS', 'Too many reset requests. Try again later.'),
+    message: jsonError(
+      'TOO_MANY_REQUESTS',
+      'Too many reset links requested from here. Try again in an hour, or ask the shop owner to set your password.',
+    ),
+  });
+
+/**
+ * *Using* a reset link, which is a completely different risk and must have its
+ * own budget.
+ *
+ * These two shared one limiter at first, and the result was the worst possible
+ * failure: request a few links while something downstream is misconfigured,
+ * finally receive a good one, and then be refused permission to spend it — a
+ * valid token, an unusable account, and an error message about "too many
+ * requests" that describes something the person is no longer doing.
+ *
+ * Redeeming a link cannot be enumerated: the token is 32 random bytes, so
+ * guessing one is not a thing that happens. This exists only so a brute-force
+ * attempt is not free, which means it can be far looser. Successful redemptions
+ * are not counted at all — a limit on *succeeding* protects nobody, and would
+ * punish someone who mistyped the confirmation box twice.
+ */
+export const passwordResetConfirmLimiter = () =>
+  rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 20,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: jsonError(
+      'TOO_MANY_REQUESTS',
+      'Too many attempts with a reset link. Try again in fifteen minutes.',
+    ),
   });
 
 /// Registration creates tenants — one every few minutes per IP is plenty.
@@ -88,6 +127,7 @@ export function buildLimiters(enabled: boolean) {
       global: passThrough,
       auth: passThrough,
       passwordReset: passThrough,
+      passwordResetConfirm: passThrough,
       register: passThrough,
     };
   }
@@ -95,6 +135,7 @@ export function buildLimiters(enabled: boolean) {
     global: globalLimiter(),
     auth: authLimiter(),
     passwordReset: passwordResetLimiter(),
+    passwordResetConfirm: passwordResetConfirmLimiter(),
     register: registerLimiter(),
   };
 }

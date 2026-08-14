@@ -975,4 +975,61 @@ describe('HTTP rate limiting', () => {
     const blocked = await limited.post('/api/auth/register', registrationPayload());
     assert.equal(blocked.body.error.code, 'TOO_MANY_REQUESTS');
   });
+
+  /**
+   * Asking for a reset link and redeeming one had a single shared budget, and
+   * the consequence was ugly: request a handful of links while something
+   * downstream is misconfigured, finally get a working one, and then be
+   * refused permission to use it. A valid token and no way to spend it.
+   */
+  it('lets a reset link be redeemed after the request budget is exhausted', async () => {
+    const registration = registrationPayload();
+    await limited.post('/api/auth/register', registration);
+
+    // Burn the request budget, exactly as a frustrated person retrying does.
+    for (let i = 0; i < 8; i++) {
+      await limited.post('/api/auth/forgot-password', { identifier: registration.owner.phone });
+    }
+    const exhausted = await limited.post('/api/auth/forgot-password', {
+      identifier: registration.owner.phone,
+    });
+    assert.equal(exhausted.status, 429, 'requesting should be limited');
+
+    // Redeeming must still be possible. An invalid token is the right probe:
+    // it proves the request reached the handler rather than the limiter, and
+    // it needs no real token to do so.
+    const redeem = await limited.post('/api/auth/reset-password', {
+      token: 'a-token-that-does-not-exist',
+      newPassword: 'a-brand-new-passphrase',
+    });
+    assert.notEqual(redeem.status, 429, 'redeeming must have its own budget');
+    assert.equal(redeem.status, 400);
+    assert.match(redeem.body.error.message, /invalid or has expired/i);
+  });
+
+  it('still limits brute force against the reset link itself', async () => {
+    // Counted rather than indexed: the limiter's budget is per app instance and
+    // the test above already spent some of it. Asserting on a fixed position
+    // would make this pass or fail depending on test order.
+    let rejected = 0;
+    let blockedAfter: number | null = null;
+
+    for (let i = 0; i < 30 && blockedAfter === null; i++) {
+      const response = await limited.post('/api/auth/reset-password', {
+        token: `guess-${i}`,
+        newPassword: 'a-brand-new-passphrase',
+      });
+      if (response.status === 429) blockedAfter = rejected;
+      else {
+        assert.equal(response.status, 400);
+        rejected += 1;
+      }
+    }
+
+    // Guessing 32 random bytes is not a real threat, but it should not be free
+    // either — and the ceiling must stay well clear of someone fumbling the
+    // confirmation box a few times.
+    assert.notEqual(blockedAfter, null, 'brute force was never blocked');
+    assert.ok(blockedAfter! >= 10, `blocked after only ${blockedAfter} attempts`);
+  });
 });

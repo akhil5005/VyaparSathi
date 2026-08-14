@@ -49,10 +49,18 @@ export function ErrorAlert({ error }: { error: unknown }) {
     if (error.code === 'VALIDATION_ERROR' && error.fields?.length) {
       return <Alert tone="error">Some fields need correcting — see below.</Alert>;
     }
+    /**
+     * "Please try again" is added only where the server did not already say
+     * when to come back. A 429 always names its own wait — appending to it
+     * produced "Too many reset requests. Try again later. Please try again.",
+     * which reads like a stutter and tells the reader nothing new.
+     */
+    const alreadySaysRetry = error.status === 429 || /try again/i.test(error.message);
+
     return (
       <Alert tone="error">
         {error.message}
-        {error.isTransient ? ' Please try again.' : null}
+        {error.isTransient && !alreadySaysRetry ? ' Please try again.' : null}
       </Alert>
     );
   }
