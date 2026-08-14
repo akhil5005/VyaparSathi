@@ -16,6 +16,10 @@ import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { AdjustStockDialog } from './AdjustStockDialog';
 import { EditProductDialog } from './EditProductDialog';
+import { Pagination, usePage } from '../../components/Pagination';
+
+/// The movement list sits inside a dialog, so it stays short.
+const HISTORY_PAGE_SIZE = 20;
 
 /**
  * Everything about one product, and the two things you do to it: correct the
@@ -37,6 +41,7 @@ export function ProductDetailDialog({
   const canSeeCost = can(...CAN_SEE_COST);
   const [adjusting, setAdjusting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [page, setPage] = usePage([productId]);
 
   const product = useQuery({
     queryKey: ['products', productId],
@@ -44,10 +49,10 @@ export function ProductDetailDialog({
   });
 
   const history = useQuery({
-    queryKey: ['products', productId, 'stock-history'],
+    queryKey: ['products', productId, 'stock-history', page],
     queryFn: () =>
       api.get<StockHistoryResponse>(`/api/masters/products/${productId}/stock-history`, {
-        query: { pageSize: 25 },
+        query: { page, pageSize: HISTORY_PAGE_SIZE },
       }),
   });
 
@@ -182,6 +187,14 @@ export function ProductDetailDialog({
                   ))}
                 </ul>
               )}
+
+              <Pagination
+                page={history.data?.page ?? page}
+                pageSize={history.data?.pageSize ?? HISTORY_PAGE_SIZE}
+                total={history.data?.total ?? 0}
+                onPage={setPage}
+                noun="movements"
+              />
             </div>
           </div>
         ) : null}

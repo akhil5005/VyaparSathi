@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Pagination, usePage } from '../../components/Pagination';
 import { api } from '../../lib/api';
 import { formatDate, formatMoney } from '../../lib/money';
 import type { NoteListResponse } from '../../lib/types';
@@ -9,6 +10,9 @@ import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { NewCreditNoteDialog } from './NewCreditNoteDialog';
 import { reasonLabel } from './reasons';
+
+/// One screenful. Small enough to scan, large enough that paging is rare.
+const PAGE_SIZE = 25;
 
 /**
  * Credit notes — the correct way to undo part of a sale.
@@ -26,10 +30,11 @@ export function NotesPage() {
   const { can } = useAuth();
   const canIssue = can(...CAN_EDIT_MASTERS);
   const [creating, setCreating] = useState(false);
+  const [page, setPage] = usePage([]);
 
   const notes = useQuery({
-    queryKey: ['notes', 'list'],
-    queryFn: () => api.get<NoteListResponse>('/api/notes', { query: { pageSize: 50 } }),
+    queryKey: ['notes', 'list', page],
+    queryFn: () => api.get<NoteListResponse>('/api/notes', { query: { page, pageSize: PAGE_SIZE } }),
   });
 
   const rows = notes.data?.notes ?? [];
@@ -131,6 +136,14 @@ export function NotesPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={notes.data?.page ?? page}
+            pageSize={notes.data?.pageSize ?? PAGE_SIZE}
+            total={notes.data?.total ?? 0}
+            onPage={setPage}
+            noun="notes"
+          />
         </div>
       )}
 

@@ -14,6 +14,10 @@ import { RecordPaymentDialog } from './RecordPaymentDialog';
 import { OutstandingTable } from './OutstandingTable';
 import { ChequeList } from './ChequeList';
 import { PaymentList } from './PaymentList';
+import { Pagination, usePage } from '../../components/Pagination';
+
+/// One screenful. Small enough to scan, large enough that paging is rare.
+const PAGE_SIZE = 25;
 
 /**
  * Money coming in, and who still owes it.
@@ -34,6 +38,10 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function PaymentsPage() {
   const [tab, setTab] = useState<Tab>('outstanding');
+  // A page each: switching tabs should not carry page four across to a list
+  // that has two pages.
+  const [paymentsPage, setPaymentsPage] = usePage([tab]);
+  const [chequesPage, setChequesPage] = usePage([tab]);
   const [recording, setRecording] = useState<{ partyId?: string; partyName?: string } | null>(
     null,
   );
@@ -44,14 +52,20 @@ export function PaymentsPage() {
   });
 
   const payments = useQuery({
-    queryKey: ['payments', 'list'],
-    queryFn: () => api.get<PaymentListResponse>('/api/payments', { query: { pageSize: 50 } }),
+    queryKey: ['payments', 'list', paymentsPage],
+    queryFn: () =>
+      api.get<PaymentListResponse>('/api/payments', {
+        query: { page: paymentsPage, pageSize: PAGE_SIZE },
+      }),
     enabled: tab === 'payments',
   });
 
   const cheques = useQuery({
-    queryKey: ['cheques', 'list'],
-    queryFn: () => api.get<ChequeListResponse>('/api/payments/cheques', { query: { pageSize: 50 } }),
+    queryKey: ['cheques', 'list', chequesPage],
+    queryFn: () =>
+      api.get<ChequeListResponse>('/api/payments/cheques', {
+        query: { page: chequesPage, pageSize: PAGE_SIZE },
+      }),
     enabled: tab === 'cheques',
   });
 
@@ -120,12 +134,26 @@ export function PaymentsPage() {
             totalAmount={payments.data?.totalAmount}
             totalOnAccount={payments.data?.totalOnAccount}
           />
+          <Pagination
+            page={payments.data?.page ?? paymentsPage}
+            pageSize={payments.data?.pageSize ?? PAGE_SIZE}
+            total={payments.data?.total ?? 0}
+            onPage={setPaymentsPage}
+            noun="payments"
+          />
         </Section>
       ) : null}
 
       {tab === 'cheques' ? (
         <Section query={cheques}>
           <ChequeList cheques={cheques.data?.cheques ?? []} />
+          <Pagination
+            page={cheques.data?.page ?? chequesPage}
+            pageSize={cheques.data?.pageSize ?? PAGE_SIZE}
+            total={cheques.data?.total ?? 0}
+            onPage={setChequesPage}
+            noun="cheques"
+          />
         </Section>
       ) : null}
 

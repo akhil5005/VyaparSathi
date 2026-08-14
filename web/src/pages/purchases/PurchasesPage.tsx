@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Pagination, usePage } from '../../components/Pagination';
 import { api } from '../../lib/api';
 import { formatDate, formatMoney } from '../../lib/money';
 import type { PendingItcResponse, PurchaseListResponse } from '../../lib/types';
@@ -7,6 +8,9 @@ import { Button } from '../../components/Button';
 import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { NewPurchaseDialog } from './NewPurchaseDialog';
+
+/// One screenful. Small enough to scan, large enough that paging is rare.
+const PAGE_SIZE = 25;
 
 /**
  * Supplier bills, and the credit they carry.
@@ -19,10 +23,11 @@ import { NewPurchaseDialog } from './NewPurchaseDialog';
  */
 export function PurchasesPage() {
   const [entering, setEntering] = useState(false);
+  const [page, setPage] = usePage([]);
 
   const purchases = useQuery({
-    queryKey: ['purchases', 'list'],
-    queryFn: () => api.get<PurchaseListResponse>('/api/purchases', { query: { pageSize: 50 } }),
+    queryKey: ['purchases', 'list', page],
+    queryFn: () => api.get<PurchaseListResponse>('/api/purchases', { query: { page, pageSize: PAGE_SIZE } }),
   });
 
   const pendingItc = useQuery({
@@ -151,6 +156,14 @@ export function PurchasesPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={purchases.data?.page ?? page}
+            pageSize={purchases.data?.pageSize ?? PAGE_SIZE}
+            total={purchases.data?.total ?? 0}
+            onPage={setPage}
+            noun="bills"
+          />
         </div>
       )}
 

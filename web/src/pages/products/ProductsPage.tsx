@@ -13,6 +13,10 @@ import { Link } from 'react-router-dom';
 import { Alert } from '../../components/Alert';
 import type { HsnCode } from '../../lib/types';
 import { ProductDetailDialog } from './ProductDetailDialog';
+import { Pagination, usePage } from '../../components/Pagination';
+
+/// One screenful. Small enough to scan, large enough that paging is rare.
+const PAGE_SIZE = 25;
 
 /**
  * Products and what is on the shelf.
@@ -33,6 +37,7 @@ export function ProductsPage() {
   const [openProductId, setOpenProductId] = useState<string | null>(null);
 
   const debouncedSearch = useDebounced(search);
+  const [page, setPage] = usePage([debouncedSearch, lowStockOnly]);
 
   /**
    * A product cannot exist without an HSN code, and a freshly registered shop
@@ -46,13 +51,14 @@ export function ProductsPage() {
   const noHsnYet = !hsn.isLoading && (hsn.data?.hsnCodes.length ?? 0) === 0;
 
   const products = useQuery({
-    queryKey: ['products', 'list', debouncedSearch, lowStockOnly],
+    queryKey: ['products', 'list', debouncedSearch, lowStockOnly, page],
     queryFn: () =>
       api.get<ProductListResponse>('/api/masters/products', {
         query: {
           search: debouncedSearch || undefined,
           lowStockOnly: lowStockOnly || undefined,
-          pageSize: 100,
+          page,
+          pageSize: PAGE_SIZE,
         },
       }),
   });
@@ -147,6 +153,14 @@ export function ProductsPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={products.data?.page ?? page}
+            pageSize={products.data?.pageSize ?? PAGE_SIZE}
+            total={products.data?.total ?? 0}
+            onPage={setPage}
+            noun="products"
+          />
         </div>
       )}
 

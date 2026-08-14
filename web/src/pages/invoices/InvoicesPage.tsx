@@ -8,6 +8,7 @@ import { Button } from '../../components/Button';
 import { ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { InvoiceDetailDialog } from './InvoiceDetailDialog';
+import { Pagination, usePage } from '../../components/Pagination';
 
 /**
  * Every bill ever raised.
@@ -18,6 +19,9 @@ import { InvoiceDetailDialog } from './InvoiceDetailDialog';
  * invoice, because nothing should: it is a numbered legal document, and the only
  * way to undo one is a cancellation that leaves the number spent.
  */
+
+/// One screenful. Small enough to scan, large enough that paging is rare.
+const PAGE_SIZE = 25;
 
 const STATUS_FILTERS: { id: InvoiceStatus | 'ALL' | 'UNPAID'; label: string }[] = [
   { id: 'ALL', label: 'All' },
@@ -35,9 +39,10 @@ export function InvoicesPage() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   const debouncedSearch = useDebounced(search);
+  const [page, setPage] = usePage([debouncedSearch, filter, fromDate, toDate]);
 
   const invoices = useQuery({
-    queryKey: ['invoices', 'list', debouncedSearch, filter, fromDate, toDate],
+    queryKey: ['invoices', 'list', debouncedSearch, filter, fromDate, toDate, page],
     queryFn: () =>
       api.get<SalesInvoiceListResponse>('/api/sales-invoices', {
         query: {
@@ -48,7 +53,8 @@ export function InvoicesPage() {
           unpaidOnly: filter === 'UNPAID' || undefined,
           fromDate: fromDate || undefined,
           toDate: toDate || undefined,
-          pageSize: 100,
+          page,
+          pageSize: PAGE_SIZE,
         },
       }),
   });
@@ -209,6 +215,14 @@ export function InvoicesPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={invoices.data?.page ?? page}
+            pageSize={invoices.data?.pageSize ?? PAGE_SIZE}
+            total={invoices.data?.total ?? 0}
+            onPage={setPage}
+            noun="invoices"
+          />
         </div>
       )}
 

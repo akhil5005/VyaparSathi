@@ -10,6 +10,10 @@ import { Spinner } from '../../components/Spinner';
 import { CAN_EDIT_MASTERS, useAuth } from '../../auth/AuthProvider';
 import { readBalance } from './balance';
 import { EditPartyDialog } from './EditPartyDialog';
+import { Pagination, usePage } from '../../components/Pagination';
+
+/// Fits the dialog without its own scrollbar fighting the page's.
+const LEDGER_PAGE_SIZE = 25;
 
 /**
  * One party, and their account.
@@ -30,6 +34,7 @@ export function PartyDetailDialog({
   const { can } = useAuth();
   const canEdit = can(...CAN_EDIT_MASTERS);
   const [editing, setEditing] = useState(false);
+  const [page, setPage] = usePage([partyId]);
 
   const party = useQuery({
     queryKey: ['parties', partyId],
@@ -37,10 +42,10 @@ export function PartyDetailDialog({
   });
 
   const ledger = useQuery({
-    queryKey: ['parties', partyId, 'ledger'],
+    queryKey: ['parties', partyId, 'ledger', page],
     queryFn: () =>
       api.get<PartyLedgerResponse>(`/api/masters/parties/${partyId}/ledger`, {
-        query: { pageSize: 50 },
+        query: { page, pageSize: LEDGER_PAGE_SIZE },
       }),
   });
 
@@ -48,26 +53,16 @@ export function PartyDetailDialog({
   const balance = readBalance(p?.currentBalance);
 
   /**
-   * Entries newest-first, ordered by when they were **written**.
+   * Taken as the server sends them.
    *
-   * The server orders by `entryDate`, which is the right instinct for a ledger
-   * but breaks the running-balance column here. An invoice's entryDate carries
-   * a time; a payment's is midnight, because it comes from a date input. So on
-   * a day with both, the payment sorts ahead of the sale that caused it and the
-   * balances read 0 → 2,832 → 1,832 → 1,032 — an account that looks broken.
-   *
-   * `runningBalance` was computed at insert time, so `createdAt` is the only
-   * order in which that column is coherent. Sorting by it makes each row's
-   * balance genuinely follow from the one below.
-   *
-   * Worth noting the limitation: the server paginates by entryDate, so on a
-   * party with more than one page of history this reorders within the page
-   * rather than across the whole account. Fixing that properly means ordering
-   * by `createdAt` server-side too.
+   * This used to re-sort each page by `createdAt`, because the server ordered
+   * by `entryDate` and the stored `runningBalance` only makes sense in
+   * insertion order. That fixed the view within a page and could not fix it
+   * across pages, so once the ledger paginated the workaround became the rule:
+   * `getPartyLedger` now orders by insertion, newest first, and there is
+   * nothing left for the client to correct.
    */
-  const entries = [...(ledger.data?.entries ?? [])].sort((a, b) =>
-    b.createdAt.localeCompare(a.createdAt),
-  );
+  const entries = ledger.data?.entries ?? [];
 
   return (
     <>
@@ -218,6 +213,14 @@ export function PartyDetailDialog({
                   </table>
                 </div>
               )}
+
+              <Pagination
+                page={ledger.data?.page ?? page}
+                pageSize={ledger.data?.pageSize ?? LEDGER_PAGE_SIZE}
+                total={ledger.data?.total ?? 0}
+                onPage={setPage}
+                noun="entries"
+              />
             </div>
           </div>
         ) : null}

@@ -337,7 +337,26 @@ export async function getPartyLedger(
   const [entries, total, totals] = await Promise.all([
     prisma.ledgerEntry.findMany({
       where,
-      orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }],
+      /**
+       * Newest first, by **insertion** order rather than entry date.
+       *
+       * `runningBalance` is computed and stored when the row is written, so it
+       * is only coherent read back in that same sequence. Ordering by
+       * `entryDate` looks more like a ledger and quietly breaks the column: an
+       * invoice carries a time, a payment entered from a date input is
+       * midnight, so on a day with both the payment sorts ahead of the sale
+       * that caused it and the balances read 0 → 2,832 → 1,832 → 1,032. An
+       * account that appears not to add up.
+       *
+       * The parties screen used to re-sort each page to work around this,
+       * which fixed the view within a page and could not fix it across pages —
+       * so once the ledger paginated, the workaround had to become the rule.
+       * Each row's balance now genuinely follows from the row below it.
+       *
+       * Filtering still uses `entryDate`, because "March's entries" means the
+       * dates on the documents, not when they were typed in.
+       */
+      orderBy: [{ createdAt: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),

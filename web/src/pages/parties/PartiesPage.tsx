@@ -9,7 +9,11 @@ import { ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { readBalance } from './balance';
 import { PartyDetailDialog } from './PartyDetailDialog';
+import { Pagination, usePage } from '../../components/Pagination';
 import { NewPartyDialog } from './NewPartyDialog';
+
+/// One screenful. Small enough to scan, large enough that paging is rare.
+const PAGE_SIZE = 25;
 
 /**
  * Everyone the shop trades with, customers and suppliers together.
@@ -37,16 +41,18 @@ export function PartiesPage() {
   const [creating, setCreating] = useState(false);
 
   const debouncedSearch = useDebounced(search);
+  const [page, setPage] = usePage([debouncedSearch, type, withBalanceOnly]);
 
   const parties = useQuery({
-    queryKey: ['parties', 'list', debouncedSearch, type, withBalanceOnly],
+    queryKey: ['parties', 'list', debouncedSearch, type, withBalanceOnly, page],
     queryFn: () =>
       api.get<PartyListResponse>('/api/masters/parties', {
         query: {
           search: debouncedSearch || undefined,
           partyType: type === 'ALL' ? undefined : type,
           withBalanceOnly: withBalanceOnly || undefined,
-          pageSize: 100,
+          page,
+          pageSize: PAGE_SIZE,
         },
       }),
   });
@@ -200,6 +206,14 @@ export function PartiesPage() {
               </tbody>
             </table>
           </div>
+
+          <Pagination
+            page={parties.data?.page ?? page}
+            pageSize={parties.data?.pageSize ?? PAGE_SIZE}
+            total={parties.data?.total ?? 0}
+            onPage={setPage}
+            noun="names"
+          />
         </div>
       )}
 
