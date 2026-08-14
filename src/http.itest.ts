@@ -618,6 +618,121 @@ describe('HTTP API', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Input tax credit
+  // -------------------------------------------------------------------------
+
+  /**
+   * The exact sequence the input-credit screen performs.
+   *
+   * These endpoints existed, were tested at the service layer, and had no
+   * caller in the web app at all — so the credit could be recorded and never
+   * used. This walks the HTTP path the screen now takes, because that is the
+   * part that had never run.
+   */
+  describe('input tax credit over HTTP', () => {
+    it('lists unclaimed credit, claims it, and stops listing it', async () => {
+      const registration = registrationPayload();
+      const registered = await client.post('/api/auth/register', registration);
+      client.authenticateAs(registered.body.accessToken);
+
+      const units = await client.get('/api/masters/units');
+      const ream = units.body.units.find((u: { name: string }) => /ream/i.test(u.name));
+
+      const hsn = await client.post('/api/masters/hsn', {
+        code: '4802',
+        description: 'Uncoated writing and printing paper',
+        gstRate: 18,
+        effectiveFrom: '2020-01-01',
+      });
+      const product = await client.post('/api/masters/products', {
+        name: 'JK Copier A4 75gsm',
+        hsnCodeId: hsn.body.hsnCode.id,
+        baseUnitId: ream.id,
+      });
+      const supplier = await client.post('/api/masters/parties', {
+        displayName: 'JK Paper Mills',
+        partyType: 'SUPPLIER',
+        gstin: makeGstin('03'),
+        phone: nextPhone(),
+      });
+
+      const purchase = await client.post('/api/purchases', {
+        partyId: supplier.body.party.id,
+        supplierInvoiceNumber: 'JK/8801',
+        supplierInvoiceDate: '2026-07-14',
+        items: [
+          { productId: product.body.product.id, quantity: 100, unitId: ream.id, rate: 200 },
+        ],
+      });
+      assert.equal(purchase.status, 201, JSON.stringify(purchase.body));
+
+      // 100 × 200 = 20,000 taxable at 18% intra-state → 1,800 + 1,800.
+      const pending = await client.get('/api/purchases/itc/pending');
+      assert.equal(pending.status, 200);
+      assert.equal(pending.body.count, 1);
+      assert.equal(pending.body.totalCredit, '3600');
+      // The screen renders this per row, so it has to be on the projection.
+      assert.equal(pending.body.purchases[0].creditAvailable, '3600');
+      assert.equal(pending.body.purchases[0].supplierInvoiceNumber, 'JK/8801');
+
+      const claimed = await client.post('/api/purchases/itc/claim', {
+        period: '2026-07',
+        purchaseIds: [purchase.body.purchase.id],
+      });
+      assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+
+      const after = await client.get('/api/purchases/itc/pending');
+      assert.equal(after.body.count, 0, 'claimed credit must stop appearing as pending');
+      assert.equal(after.body.totalCredit, '0');
+    });
+
+    it('reports the set-off, and keeps CGST and SGST credit apart', async () => {
+      const registration = registrationPayload();
+      const registered = await client.post('/api/auth/register', registration);
+      client.authenticateAs(registered.body.accessToken);
+
+      const summary = await client.get('/api/purchases/gst-summary?period=2026-07');
+      assert.equal(summary.status, 200, JSON.stringify(summary.body));
+
+      // Shape the screen reads. Every head is present even at zero, or the
+      // table renders holes.
+      for (const head of ['cgst', 'sgst', 'igst', 'cess']) {
+        assert.ok(head in summary.body.setOff.outputTax);
+        assert.ok(head in summary.body.setOff.creditUtilised);
+        assert.ok(head in summary.body.setOff.cashPayable);
+        assert.ok(head in summary.body.setOff.creditCarriedForward);
+      }
+      assert.ok('totalCashPayable' in summary.body.setOff);
+      assert.ok('totalCarriedForward' in summary.body.setOff);
+      assert.ok(summary.body.disclaimer.length > 0);
+    });
+
+    it('keeps claiming to owner and manager, away from the counter', async () => {
+      const registration = registrationPayload();
+      const registered = await client.post('/api/auth/register', registration);
+      client.authenticateAs(registered.body.accessToken);
+
+      const staff = await client.post('/api/auth/users', {
+        fullName: 'Counter Clerk',
+        phone: nextPhone(),
+        password: 'clerk-password-long',
+        role: 'BILLING_STAFF',
+      });
+      const signedIn = await client.post('/api/auth/login', {
+        identifier: staff.body.user.phone,
+        password: 'clerk-password-long',
+      });
+      client.authenticateAs(signedIn.body.accessToken);
+
+      const attempt = await client.post('/api/purchases/itc/claim', {
+        period: '2026-07',
+        purchaseIds: ['whatever'],
+      });
+      assert.equal(attempt.status, 403);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Role gates
   // -------------------------------------------------------------------------
 

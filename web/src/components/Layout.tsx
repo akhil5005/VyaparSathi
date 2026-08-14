@@ -32,7 +32,7 @@ const NAV: NavItem[] = [
   { to: '/credit-notes', label: 'Credit notes', allow: CAN_EDIT_MASTERS },
   { to: '/purchases', label: 'Purchases', allow: CAN_EDIT_MASTERS },
   { to: '/payments', label: 'Payments & udhaar', allow: CAN_RECEIVE_PAYMENT },
-  { to: '/gstr1', label: 'GSTR-1', allow: CAN_FILE_RETURNS },
+  { to: '/gstr1', label: 'GST returns', allow: CAN_FILE_RETURNS },
   { to: '/settings', label: 'Settings', allow: CAN_EDIT_MASTERS },
   { to: '/account', label: 'My account' },
 ];

@@ -8,6 +8,7 @@ import { Button } from '../../components/Button';
 import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { NewPurchaseDialog } from './NewPurchaseDialog';
+import { InputCreditTab } from './InputCreditTab';
 
 /// One screenful. Small enough to scan, large enough that paging is rare.
 const PAGE_SIZE = 25;
@@ -21,8 +22,11 @@ const PAGE_SIZE = 25;
  * recorded and claimed in a return period, so unclaimed credit sitting here is
  * cash left on the table.
  */
+type Tab = 'bills' | 'credit';
+
 export function PurchasesPage() {
   const [entering, setEntering] = useState(false);
+  const [tab, setTab] = useState<Tab>('bills');
   const [page, setPage] = usePage([]);
 
   const purchases = useQuery({
@@ -58,10 +62,43 @@ export function PurchasesPage() {
           {formatMoney(pendingItc.data!.totalCredit)} of GST across{' '}
           {pendingItc.data!.count} bill{pendingItc.data!.count === 1 ? '' : 's'} has not been
           claimed in a return period. Your CA claims this when filing — it is money back, so it is
-          worth checking nothing is missed.
+          worth checking nothing is missed.{' '}
+          <button
+            type="button"
+            onClick={() => setTab('credit')}
+            className="font-medium underline underline-offset-2"
+          >
+            See which bills
+          </button>
         </Alert>
       ) : null}
 
+      <nav className="flex gap-1 border-b border-slate-200 dark:border-slate-800" role="tablist">
+        {([
+          { id: 'bills' as const, label: 'Bills' },
+          { id: 'credit' as const, label: 'Input credit' },
+        ]).map(({ id, label }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={[
+              '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition',
+              tab === id
+                ? 'border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100'
+                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200',
+            ].join(' ')}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {tab === 'credit' ? <InputCreditTab /> : null}
+
+      {tab === 'bills' ? (
+      <>
       <div className="grid gap-3 sm:grid-cols-3">
         <Stat label="Total purchased" value={purchases.data?.totalValue} loading={purchases.isLoading} />
         <Stat label="Taxable value" value={purchases.data?.totalTaxable} loading={purchases.isLoading} />
@@ -166,6 +203,8 @@ export function PurchasesPage() {
           />
         </div>
       )}
+      </>
+      ) : null}
 
       {entering ? <NewPurchaseDialog onClose={() => setEntering(false)} /> : null}
     </div>

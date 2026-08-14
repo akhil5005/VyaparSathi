@@ -7,20 +7,26 @@ import { Button } from '../../components/Button';
 import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { recentPeriods } from './periods';
+import { TaxSummaryTab } from './TaxSummaryTab';
+
+type Tab = 'gstr1' | 'summary';
 
 /**
- * GSTR-1 for a month.
+ * The two things a shop needs at GST time.
  *
- * The file the portal wants is unreadable — terse keys, no invoice you can
- * recognise, amounts as bare floats. Nobody can check it by looking at it, so
- * this screen shows the same month in words and figures first, and only then
- * offers the download.
+ * **GSTR-1** is the return itself. The file the portal wants is unreadable —
+ * terse keys, no invoice you can recognise, amounts as bare floats — so this
+ * shows the same month in words and figures first, and only then offers the
+ * download.
  *
- * It is a **working paper for the CA**, not a filing. Nothing here talks to the
- * GST portal, nothing is marked as filed, and the summary is meant to be
- * tallied against the sales register before anyone uploads anything.
+ * **Tax summary** is what it costs: GST collected against GST already paid,
+ * with the set-off applied.
+ *
+ * Both are **working papers for the CA**. Nothing here talks to the GST portal
+ * and nothing is marked as filed.
  */
 export function Gstr1Page() {
+  const [tab, setTab] = useState<Tab>('gstr1');
   const periods = recentPeriods();
   const [period, setPeriod] = useState(periods[0]!.value);
   const [downloading, setDownloading] = useState(false);
@@ -55,12 +61,44 @@ export function Gstr1Page() {
 
   return (
     <div className="space-y-5">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          GST returns
+        </h1>
+        <p className="mt-1 text-sm text-slate-500">
+          What to file, and what it costs. Both are working papers for your CA.
+        </p>
+      </header>
+
+      <nav className="flex gap-1 border-b border-slate-200 dark:border-slate-800" role="tablist">
+        {([
+          { id: 'gstr1' as const, label: 'GSTR-1' },
+          { id: 'summary' as const, label: 'Tax summary' },
+        ]).map(({ id, label }) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={[
+              '-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition',
+              tab === id
+                ? 'border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100'
+                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200',
+            ].join(' ')}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {tab === 'summary' ? <TaxSummaryTab /> : null}
+
+      {tab === 'gstr1' ? (
+      <>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-            GSTR-1
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="text-sm text-slate-500">
             Outward supplies for one month, ready for the offline utility.
           </p>
         </div>
@@ -187,6 +225,8 @@ export function Gstr1Page() {
             is named for the portal — open it in the GST offline utility, not a spreadsheet.
           </p>
         </>
+      ) : null}
+      </>
       ) : null}
     </div>
   );

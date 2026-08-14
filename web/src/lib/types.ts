@@ -755,7 +755,7 @@ export interface TaxHeads {
 }
 
 export interface PendingItcResponse {
-  purchases: PurchaseInvoice[];
+  purchases: PendingItcPurchase[];
   count: number;
   heads: TaxHeads;
   totalCredit: Money;
@@ -846,4 +846,65 @@ export interface Gstr1Summary {
     invoiceValue: string;
   };
   warnings: { code: string; message: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Input tax credit
+// ---------------------------------------------------------------------------
+
+export interface PendingItcPurchase {
+  id: string;
+  purchaseNumber: string;
+  supplierInvoiceNumber: string;
+  supplierInvoiceDate: IsoDate;
+  partyName: string;
+  partyGstin: string | null;
+  taxableValue: Money;
+  totalCgst: Money;
+  totalSgst: Money;
+  totalIgst: Money;
+  grandTotal: Money;
+  /// CGST + SGST + IGST on this bill — what claiming it is worth.
+  creditAvailable: Money;
+}
+
+/**
+ * `GET /api/purchases/gst-summary` — output tax against input credit, with the
+ * set-off applied. The "what do I owe this month" report.
+ */
+export interface GstSummaryResponse {
+  period: string | null;
+  fromDate: IsoDate;
+  toDate: IsoDate;
+  sales: {
+    invoiceCount: number;
+    taxableValue: Money;
+    grandTotal: Money;
+    tax: TaxHeads;
+    totalTax: Money;
+  };
+  purchases: {
+    invoiceCount: number;
+    taxableValue: Money;
+    grandTotal: Money;
+    tax: TaxHeads;
+    totalTax: Money;
+  };
+  setOff: {
+    outputTax: TaxHeads;
+    inputCredit: TaxHeads;
+    creditUtilised: TaxHeads;
+    cashPayable: TaxHeads;
+    creditCarriedForward: TaxHeads;
+    totalCashPayable: Money;
+    totalCarriedForward: Money;
+  };
+  /// Eligible credit from earlier months never claimed — money still on the table.
+  priorPeriodUnclaimed: {
+    invoiceCount: number;
+    heads: TaxHeads;
+    total: Money;
+  };
+  indicativeGrossValue: Money;
+  disclaimer: string;
 }
