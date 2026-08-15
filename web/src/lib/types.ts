@@ -908,3 +908,45 @@ export interface GstSummaryResponse {
   indicativeGrossValue: Money;
   disclaimer: string;
 }
+
+// ---------------------------------------------------------------------------
+// Reading a supplier bill from a photograph
+// ---------------------------------------------------------------------------
+
+export interface ScannedLine {
+  description: string;
+  quantity: string | null;
+  unit: string | null;
+  rate: string | null;
+  amount: string | null;
+  hsnCode: string | null;
+  /// The server's best guess, with `confident` false when it is only a guess.
+  match: { productId: string; name: string; score: number; confident: boolean } | null;
+  candidates: { productId: string; name: string; score: number }[];
+}
+
+/**
+ * `POST /api/ai/scan-purchase` — what was read off the page.
+ *
+ * A **draft**, never a saved record. Every figure here is what the model
+ * reported seeing; the tax, landed cost and totals are recomputed by the
+ * ordinary purchase code once a human has confirmed the numbers.
+ */
+export interface ScannedBill {
+  supplier: {
+    nameOnBill: string | null;
+    gstinOnBill: string | null;
+    match: { partyId: string; displayName: string; score: number; confident: boolean } | null;
+    candidates: { partyId: string; displayName: string; score: number }[];
+  };
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  freightCharges: string | null;
+  otherCharges: string | null;
+  /// What the bill says it totals. Compared against what this app computes —
+  /// a mismatch means something was misread.
+  invoiceTotal: string | null;
+  lines: ScannedLine[];
+  notes: string | null;
+  warnings: { code: string; message: string }[];
+}

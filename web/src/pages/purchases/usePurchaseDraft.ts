@@ -73,6 +73,57 @@ export function usePurchaseDraft() {
     setLines((current) => current.filter((l) => l.key !== key));
   }, []);
 
+  /**
+   * Fills the draft from a scanned bill.
+   *
+   * Takes entities already fetched by the caller rather than ids, so this hook
+   * stays free of data fetching and the scan path builds exactly the same draft
+   * shape as typing would. A line whose product could not be matched is simply
+   * not added — there is nothing to add it against — and the warning on the
+   * review screen has already said so.
+   */
+  const applyScan = useCallback(
+    (scan: {
+      supplier: PartyListItem | null;
+      invoiceNumber: string | null;
+      invoiceDate: string | null;
+      freight: string | null;
+      supplierTotal: string | null;
+      lines: { product: ProductDetail; quantity: string | null; rate: string | null }[];
+    }) => {
+      if (scan.supplier) setSupplier(scan.supplier);
+      if (scan.invoiceNumber) setInvoiceNumber(scan.invoiceNumber);
+      if (scan.invoiceDate) setInvoiceDate(scan.invoiceDate);
+      if (scan.freight) setFreight(scan.freight);
+      if (scan.supplierTotal) setSupplierTotal(scan.supplierTotal);
+
+      setLines(
+        scan.lines.map(({ product, quantity, rate }) => {
+          const units = product.productUnits ?? [];
+          const purchaseUnit = units.find((u) => u.isPurchaseDefault) ?? units[0];
+          return {
+            key: nextKey(),
+            productId: product.id,
+            productName: product.name,
+            unitId: purchaseUnit?.unitId ?? product.baseUnitId,
+            unitName: purchaseUnit?.unit.name ?? product.baseUnit?.name ?? '',
+            unitOptions: units.map((u) => ({
+              id: u.unitId,
+              name: u.unit.name,
+              symbol: u.unit.symbol,
+            })),
+            // Blank rather than zero when unreadable: an empty box asks to be
+            // filled, a zero looks like a decision somebody made.
+            quantity: quantity ?? '',
+            rate: rate ?? '',
+            discountPercent: '',
+          };
+        }),
+      );
+    },
+    [],
+  );
+
   const reset = useCallback(() => {
     setSupplier(null);
     setInvoiceNumber('');
@@ -121,6 +172,7 @@ export function usePurchaseDraft() {
     setInvoiceDate,
     lines,
     addProduct,
+    applyScan,
     updateLine,
     removeLine,
     freight,

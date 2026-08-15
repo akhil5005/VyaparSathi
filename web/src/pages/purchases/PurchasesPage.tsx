@@ -3,12 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Pagination, usePage } from '../../components/Pagination';
 import { api } from '../../lib/api';
 import { formatDate, formatMoney } from '../../lib/money';
-import type { PendingItcResponse, PurchaseListResponse } from '../../lib/types';
+import type { PendingItcResponse, PurchaseListResponse, ScannedBill } from '../../lib/types';
 import { Button } from '../../components/Button';
 import { Alert, ErrorAlert } from '../../components/Alert';
 import { Spinner } from '../../components/Spinner';
 import { NewPurchaseDialog } from './NewPurchaseDialog';
 import { InputCreditTab } from './InputCreditTab';
+import { ScanBillDialog } from './ScanBillDialog';
 
 /// One screenful. Small enough to scan, large enough that paging is rare.
 const PAGE_SIZE = 25;
@@ -26,7 +27,16 @@ type Tab = 'bills' | 'credit';
 
 export function PurchasesPage() {
   const [entering, setEntering] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState<ScannedBill | null>(null);
   const [tab, setTab] = useState<Tab>('bills');
+
+  const ai = useQuery({
+    queryKey: ['ai', 'status'],
+    queryFn: () => api.get<{ available: boolean }>('/api/ai/status'),
+    // A deployment does not gain an API key mid-session.
+    staleTime: Infinity,
+  });
   const [page, setPage] = usePage([]);
 
   const purchases = useQuery({
@@ -52,9 +62,18 @@ export function PurchasesPage() {
             Supplier bills. Entering one updates the cost of that stock.
           </p>
         </div>
-        <Button size="lg" onClick={() => setEntering(true)}>
-          Enter supplier bill
-        </Button>
+        <div className="flex gap-2">
+          {/* Hidden rather than disabled when there is no key: a button that
+              can only ever fail is worse than no button. */}
+          {ai.data?.available ? (
+            <Button variant="secondary" size="lg" onClick={() => setScanning(true)}>
+              Scan a bill
+            </Button>
+          ) : null}
+          <Button size="lg" onClick={() => setEntering(true)}>
+            Enter supplier bill
+          </Button>
+        </div>
       </header>
 
       {Number(pendingItc.data?.totalCredit ?? 0) > 0 ? (
@@ -206,7 +225,26 @@ export function PurchasesPage() {
       </>
       ) : null}
 
-      {entering ? <NewPurchaseDialog onClose={() => setEntering(false)} /> : null}
+      {scanning ? (
+        <ScanBillDialog
+          onClose={() => setScanning(false)}
+          onScanned={(bill) => {
+            setScanning(false);
+            setScanned(bill);
+            setEntering(true);
+          }}
+        />
+      ) : null}
+
+      {entering ? (
+        <NewPurchaseDialog
+          prefill={scanned}
+          onClose={() => {
+            setEntering(false);
+            setScanned(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

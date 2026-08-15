@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { useDebounced } from '../../lib/hooks';
@@ -9,6 +9,7 @@ import type {
   ProductDetail,
   ProductListResponse,
   PurchasePreviewResponse,
+  ScannedBill,
 } from '../../lib/types';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
@@ -30,7 +31,14 @@ import { PurchaseLinesTable } from './PurchaseLinesTable';
  * and flags a mismatch here, rather than the difference surfacing months later
  * during a GSTR-2B reconciliation.
  */
-export function NewPurchaseDialog({ onClose }: { onClose: () => void }) {
+export function NewPurchaseDialog({
+  onClose,
+  prefill,
+}: {
+  onClose: () => void;
+  /// A bill read from a photograph, to be checked and corrected here.
+  prefill?: ScannedBill | null;
+}) {
   const queryClient = useQueryClient();
   const draft = usePurchaseDraft();
 
@@ -38,6 +46,62 @@ export function NewPurchaseDialog({ onClose }: { onClose: () => void }) {
   const [productQuery, setProductQuery] = useState('');
   const supplierBox = useRef<ComboboxHandle>(null);
   const productBox = useRef<ComboboxHandle>(null);
+
+  /**
+   * Loading a scanned bill into the form.
+   *
+   * The scan returns ids; the form needs whole records, because a purchase line
+   * carries the product's units and the supplier's state. Fetched here rather
+   * than widened into the scan response, so the draft ends up byte-identical to
+   * one typed by hand — the same shape, through the same hook.
+   *
+   * Runs once. `applied` guards against a re-render refilling boxes the
+   * operator has already corrected, which would be maddening.
+   */
+  const [applied, setApplied] = useState(false);
+  useEffect(() => {
+    if (!prefill || applied) return;
+    setApplied(true);
+
+    void (async () => {
+      const productIds = [
+        ...new Set(prefill.lines.map((line) => line.match?.productId).filter(Boolean)),
+      ] as string[];
+
+      const [supplier, products] = await Promise.all([
+        prefill.supplier.match
+          ? api
+              .get<{ party: PartyListItem }>(
+                `/api/masters/parties/${prefill.supplier.match.partyId}`,
+              )
+              .then((r) => r.party)
+              .catch(() => null)
+          : Promise.resolve(null),
+        Promise.all(
+          productIds.map((id) =>
+            api
+              .get<{ product: ProductDetail }>(`/api/masters/products/${id}`)
+              .then((r) => r.product)
+              .catch(() => null),
+          ),
+        ),
+      ]);
+
+      const byId = new Map(products.filter(Boolean).map((p) => [p!.id, p!]));
+
+      draft.applyScan({
+        supplier,
+        invoiceNumber: prefill.invoiceNumber,
+        invoiceDate: prefill.invoiceDate,
+        freight: prefill.freightCharges,
+        supplierTotal: prefill.invoiceTotal,
+        lines: prefill.lines.flatMap((line) => {
+          const product = line.match ? byId.get(line.match.productId) : undefined;
+          return product ? [{ product, quantity: line.quantity, rate: line.rate }] : [];
+        }),
+      });
+    })();
+  }, [prefill, applied, draft]);
 
   const debouncedSupplier = useDebounced(supplierQuery);
   const debouncedProduct = useDebounced(productQuery);
