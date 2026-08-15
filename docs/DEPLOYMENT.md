@@ -141,6 +141,76 @@ runs automatically yet; somebody has to do it.
 
 ---
 
+## 5. Switching the AI features on
+
+Two features need keys: **reading a bill from a photograph** (Purchases → *Scan
+a bill*) and **asking the shop a question** (the *Ask* button in the header).
+Both are off until the keys are set, and they say so by disappearing rather than
+by failing when pressed — `GET /api/ai/status` returns `available` and `speech`,
+and the buttons are hidden when the answer is no.
+
+| Variable | Needed for | Without it |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Both features | Neither button appears |
+| `SARVAM_API_KEY` | Speaking a question | The Ask dialog still works — typed only |
+| `OPENAI_API_KEY` | Whisper as a speech fallback | Sarvam alone; no fallback if it is down |
+| `ASR_PROVIDER` | Which engine is tried first — `sarvam` (default) or `openai` | Sarvam first |
+
+### Getting the Anthropic key
+
+1. Sign in at [platform.claude.com](https://platform.claude.com) — the same
+   Google account is fine.
+2. **Billing → Add credits.** The API is prepaid and separate from any Claude
+   subscription; a subscription does not include API credit. The smallest
+   top-up is far more than this shop will use.
+3. **API keys → Create key.** Name it `vyapar-sathi-render`. It is shown once —
+   copy it before closing the dialog. It starts `sk-ant-`.
+
+**What it costs.** Claude Opus 5 is $5 per million input tokens and $25 per
+million output. A downscaled bill photograph is roughly 2,500 input tokens, so
+a one-page scan lands near **₹1**, and a typed or spoken question is a fraction
+of that. A hundred bills a month is small change; it is worth watching for a
+week rather than assuming either way.
+
+### Getting the Sarvam key (optional)
+
+1. Sign up at [dashboard.sarvam.ai](https://dashboard.sarvam.ai) — an Indian
+   company, and the reason speech works in Punjabi at all.
+2. **API keys → Create.** New accounts get free credits; check their current
+   pricing before relying on it in daily use.
+
+Skip this one to begin with. Typed questions exercise exactly the same
+pipeline — number parsing, matching, intent, answer — so the feature is worth
+having on before speech is.
+
+### Putting them on Render
+
+1. [dashboard.render.com](https://dashboard.render.com) → the **vyapar-sathi**
+   service.
+2. **Environment** in the left sidebar → **Add environment variable**.
+3. Key `ANTHROPIC_API_KEY`, value the `sk-ant-…` string. Repeat for
+   `SARVAM_API_KEY` if you have one. No quotes, no spaces around the value.
+4. **Save changes.** Render redeploys on its own — about three minutes. The
+   keys are stored encrypted and are never shown in full again, so keep your
+   own copy somewhere safe.
+
+### Checking it worked
+
+Open the site and look at the header. **Ask** appears next to *Sign out* once
+`ANTHROPIC_API_KEY` is live; open it and the microphone appears only if
+`SARVAM_API_KEY` is live too. Purchases gains a **Scan a bill** button beside
+*New purchase*.
+
+If the buttons do not appear after the deploy finishes, it is almost always one
+of three things: the deploy is still running (watch the Render log for `Vyapar
+Sathi API listening`), the browser is holding the old page (hard refresh —
+`Ctrl+Shift+R`), or the variable name is misspelled. To check the server
+directly, sign in and open
+`https://vyapar-sathi-y7bg.onrender.com/api/ai/status` in the same tab; it
+answers `{"available":true,"speech":true}` when both keys are in place.
+
+---
+
 ## Forgotten passwords
 
 **On a deployment with no `RESEND_API_KEY`, the "forgot password" link cannot
