@@ -950,3 +950,46 @@ export interface ScannedBill {
   notes: string | null;
   warnings: { code: string; message: string }[];
 }
+
+// ---------------------------------------------------------------------------
+// Asking the shop a question
+// ---------------------------------------------------------------------------
+
+export type VoiceQueryIntent =
+  | 'PARTY_BALANCE'
+  | 'PRODUCT_STOCK'
+  | 'PRODUCT_RATE'
+  | 'SALES_TOTAL'
+  | 'PURCHASES_TOTAL'
+  | 'RECEIVABLES_TOTAL'
+  | 'PAYABLES_TOTAL'
+  | 'PARTY_LAST_INVOICE'
+  | 'UNKNOWN';
+
+/**
+ * `POST /api/ai/ask` — the answer to a spoken or typed question.
+ *
+ * Read-only by construction. `answer` is composed on the server out of the
+ * shop's own figures, never written by the model, so it can be shown as it
+ * arrives. `choices` appears instead of an answer when the question named a
+ * customer or product ambiguously — asking again with the chosen id settles it.
+ */
+export interface VoiceAnswer {
+  /// The words as heard, before spoken numerals were turned into digits.
+  heard: string;
+  understood: string;
+  intent: VoiceQueryIntent;
+  answer: string;
+  details: { label: string; value: string }[];
+  choices: { kind: 'party' | 'product'; options: { id: string; name: string }[] } | null;
+  confidence: number;
+  reasoning: string | null;
+  /// "sarvam", "whisper" or "typed".
+  engine: string | null;
+}
+
+/// `GET /api/ai/status` — two switches: the AI key, and the speech key.
+export interface AiStatus {
+  available: boolean;
+  speech: boolean;
+}

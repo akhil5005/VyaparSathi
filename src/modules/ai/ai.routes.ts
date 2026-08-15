@@ -1,11 +1,13 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
 import { authenticate } from '../../middleware/authenticate.js';
-import { authorize, CAN_EDIT_MASTERS } from '../../middleware/authorize.js';
+import { authorize, CAN_EDIT_MASTERS, CAN_SEE_COST, CAN_VIEW } from '../../middleware/authorize.js';
 import { handler, scopeOf } from '../../lib/http.js';
 import { badRequest } from '../../lib/errors.js';
 import { extractor } from '../../lib/anthropic.js';
 import { scanPurchaseBill } from './scanPurchase.service.js';
+import { transcriber } from '../voice/asr.js';
+import { askVoiceQuestion } from '../voice/voiceQuery.service.js';
 
 export const aiRouter = Router();
 
@@ -19,6 +21,14 @@ export const aiRouter = Router();
  * endpoint in the app.
  */
 aiRouter.use('/scan-purchase', express.json({ limit: '12mb' }));
+
+/**
+ * Audio is smaller than a photograph but still above the global cap.
+ *
+ * A few seconds of Opus is tens of kilobytes; the headroom is for a browser
+ * that recorded uncompressed and for base64's third.
+ */
+aiRouter.use('/ask', express.json({ limit: '6mb' }));
 
 aiRouter.use(authenticate);
 
@@ -46,6 +56,55 @@ aiRouter.post(
   }),
 );
 
+const askSchema = z
+  .object({
+    audio: z
+      .object({
+        /// Base64 without the data: prefix.
+        data: z.string().min(100, 'That recording is empty').max(8_000_000, 'That recording is too long'),
+        mediaType: z.string().regex(/^audio\/[\w.+-]+$/, 'That is not an audio recording'),
+      })
+      .optional(),
+    /// Typed instead of spoken — the same pipeline, and the only way in when no
+    /// speech key is configured.
+    text: z.string().trim().min(2).max(500).optional(),
+    /// Set when the operator answered a "which one did you mean?" prompt.
+    pinnedPartyId: z.string().min(1).optional(),
+    pinnedProductId: z.string().min(1).optional(),
+  })
+  .refine((body) => body.audio ?? body.text, { message: 'Say or type a question' });
+
+/**
+ * Asking the shop a question.
+ *
+ * Open to everyone who can view, because it answers nothing they could not read
+ * off a screen — and the service is handed the role so it withholds the cost
+ * figures that billing staff are not shown anywhere else either.
+ */
+aiRouter.post(
+  '/ask',
+  authorize(...CAN_VIEW),
+  handler(async (req, res) => {
+    const input = askSchema.parse(req.body);
+    const { businessId, role } = scopeOf(req);
+
+    res.json({
+      answer: await askVoiceQuestion(
+        businessId,
+        {
+          audio: input.audio
+            ? { data: Buffer.from(input.audio.data, 'base64'), mediaType: input.audio.mediaType }
+            : undefined,
+          text: input.text,
+          pinnedPartyId: input.pinnedPartyId,
+          pinnedProductId: input.pinnedProductId,
+        },
+        { canSeeCost: CAN_SEE_COST.includes(role) },
+      ),
+    });
+  }),
+);
+
 /**
  * Whether the AI features are switched on at all.
  *
@@ -56,7 +115,9 @@ aiRouter.post(
 aiRouter.get(
   '/status',
   handler(async (_req, res) => {
-    res.json({ available: extractor.available });
+    // Two separate switches: without an AI key nothing works, and without a
+    // speech key questions still work but have to be typed.
+    res.json({ available: extractor.available, speech: transcriber.available });
   }),
 );
 

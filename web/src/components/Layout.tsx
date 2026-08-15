@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { ErrorBoundary } from './ErrorBoundary';
+import { AskDialog } from './AskDialog';
+import { api } from '../lib/api';
+import type { AiStatus } from '../lib/types';
 import {
   CAN_EDIT_MASTERS,
   CAN_FILE_RETURNS,
@@ -42,8 +46,16 @@ export function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [asking, setAsking] = useState(false);
 
   const visible = NAV.filter((item) => !item.allow || (user && item.allow.includes(user.role)));
+
+  const ai = useQuery({
+    queryKey: ['ai', 'status'],
+    queryFn: () => api.get<AiStatus>('/api/ai/status'),
+    // A deployment does not gain an API key mid-session.
+    staleTime: Infinity,
+  });
 
   async function onSignOut() {
     await signOut();
@@ -90,11 +102,25 @@ export function Layout() {
             <p className="text-xs text-slate-500">{user ? roleLabel(user.role) : null}</p>
           </div>
 
+          {/* Sits in the header rather than on a page because the question
+              gets asked wherever you happen to be standing. Hidden entirely
+              when the deployment has no AI key — an always-failing button is
+              worse than no button. */}
+          {ai.data?.available ? (
+            <Button variant="secondary" size="sm" onClick={() => setAsking(true)}>
+              Ask
+            </Button>
+          ) : null}
+
           <Button variant="secondary" size="sm" onClick={onSignOut}>
             Sign out
           </Button>
         </div>
       </header>
+
+      {asking ? (
+        <AskDialog onClose={() => setAsking(false)} speech={ai.data?.speech ?? false} />
+      ) : null}
 
       <div className="mx-auto flex max-w-7xl gap-6 px-4 py-6">
         <nav

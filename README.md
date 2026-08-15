@@ -867,12 +867,67 @@ needed beyond `app.use(cors())`:
   but opening an invoice PDF in a new tab is a no-cors navigation that
   `same-origin` blocks.
 
-### Voice groundwork — `src/modules/voice/`
+### Reading a bill from a photograph — `src/modules/ai/`
 
-`punjabiNumbers.ts` — the Punjabi/Hindi spoken-number parser. `sarhe teen` → 3.5,
-`sava do sau` → 225, `paune char sau` → 375. 36 tests, all green. This runs
-*before* the model sees the utterance, so the model never has to reason about
-fractional number words.
+Point a phone at a supplier's invoice and the purchase form comes back filled
+in. Entering purchases is the slowest job in the shop and the one whose mistakes
+travel furthest — a supplier bill sets the moving-average cost, so a wrong rate
+quietly corrupts every margin afterwards — and it is the one task always done
+with the paper still in your hand, which makes checking the result free.
+
+Three rules hold it together, and the code enforces each:
+
+- **Nothing is written.** The scan returns a draft that lands in the ordinary
+  purchase form, which calls the ordinary service.
+- **The model reads; it does not compute.** It reports what is printed. Tax,
+  landed cost and totals are recomputed server-side from what the operator
+  confirms.
+- **The model never invents a party or a product.** Names come back as printed;
+  matching them to records is deterministic in
+  [`match.ts`](src/modules/ai/match.ts) — Sørensen–Dice over bigrams plus token
+  containment, which copes with `M/S J.K. PAPER MILLS LTD.` against
+  `JK Paper Mills` — and an uncertain match is offered as a choice, never
+  applied. A GSTIN printed on the bill outranks any name score, because it is an
+  identifier rather than a resemblance.
+
+Photos are downscaled to 1600px in the browser before upload: printed invoice
+text stays legible well below sensor resolution, the upload survives a shop
+connection, and the full-size file never leaves the phone.
+
+### Asking the shop a question — `src/modules/voice/`
+
+"Sharma Stationery nu kinna paisa dena hai?" — spoken into the phone, or typed,
+answered from the ledger. Read-only, deliberately: it is useful immediately, it
+shows how the speech engine copes with how this shop actually talks, and it
+cannot damage anything while that is being found out.
+
+The pipeline puts as little as possible in the model's hands.
+[`punjabiNumbers.ts`](src/modules/voice/punjabiNumbers.ts) turns `sarhe teen`
+into 3.5 and `sava do sau` into 225 before anything else looks at the sentence —
+a closed grammar, so a parser is right every time where a model is right most of
+the time. `match.ts` then narrows a few hundred names to a shortlist of four.
+Only then does Claude see the utterance, and its whole job is to pick an intent
+and an id from that list.
+
+Two further rules make the answers trustworthy:
+
+- **The model never states a figure.** Every amount, quantity and date in the
+  reply is composed by [`voiceQuery.service.ts`](src/modules/voice/voiceQuery.service.ts)
+  from the database. A confidently wrong balance read out at a counter is worse
+  than no feature.
+- **Ids are checked against the shortlist.** Anything else the model returns is
+  discarded, so a hallucinated cuid never reaches a `where` clause. One
+  integration test runs every intent and asserts that no row, balance, stock
+  figure or number sequence moved.
+
+Balances are answered in words rather than signs — "you owe JK Mills ₹8,000"
+rather than a minus — because a minus sign is inaudible and this is a feature
+you use while looking at a customer. Cost figures are withheld from staff who
+are not shown them elsewhere either.
+
+Speech goes through Sarvam's Saarika (`pa-IN`) with Whisper behind it; without a
+speech key the same questions can still be typed, and without an Anthropic key
+the Ask button does not appear at all.
 
 Full AI architecture and the Claude call shape: **[docs/AI_STACK.md](docs/AI_STACK.md)**.
 
@@ -898,25 +953,21 @@ GSTR-1 export and backups are built; what remains:
    restore window, so a mistake noticed the next morning is already past it and
    a downloaded copy is the only way back. A nightly job writing to object
    storage is the honest version.
-2. **Ledger ordering, server-side.** `runningBalance` is computed in insertion
-   order but the ledger is served in `entryDate` order, and the two disagree
-   whenever an entry is backdated. The parties screen sorts around it within a
-   page; the real fix belongs in `getPartyLedger`.
-3. **Pagination.** Every list asks for `pageSize: 100` and stops there. Fine for
-   a first year of trading, not for a fifth.
-4. **Voice queries, then voice billing** — the confirmation card calls
-   `POST /api/sales-invoices/preview`, which already exists. Needs an Anthropic
-   key and a Sarvam key; nothing in the codebase touches them until then.
-5. **E-way bill** generation against the NIC portal via a GSP. Requires a
+2. **Voice billing.** Reading a bill from a photograph and asking read-only
+   questions are both built; making a bill by voice is not. The confirmation
+   card would call `POST /api/sales-invoices/preview`, which already exists.
+   Worth building only once the query path is reliably understanding real
+   speech — which is the point of shipping the read-only half first.
+3. **E-way bill** generation against the NIC portal via a GSP. Requires a
    commercial GSP account before it can be verified against anything real.
-6. **Freight is added after tax.** On a composite supply of goods, freight
+4. **Freight is added after tax.** On a composite supply of goods, freight
    normally takes the rate of the goods it carries. Changing it would not touch
    bills already issued, so GSTR-1 raises a warning naming the invoices rather
    than quietly adjusting a legal document after the fact.
 
 ## Test coverage
 
-**462 tests, all green** — 293 unit + 169 integration.
+**559 tests, all green** — 331 unit + 228 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 
@@ -929,6 +980,9 @@ GSTR-1 export and backups are built; what remains:
 | Ageing | Bucket boundaries, ageing from due date vs invoice date |
 | Paper | gsm × area × sheets → ream weight, kg↔ream factor, sheet-size parsing |
 | Punjabi | `sarhe teen` → 3.5, `sava do sau` → 225, Gurmukhi script |
+| Name matching | `M/S J.K. PAPER MILLS LTD.` resolves to `JK Paper Mills`; `75gsm` matches `75 GSM` while `A4` stays intact; two near-identical names get a candidate list, not a confident pick |
+| Spoken periods | Week starts Monday (and Sunday belongs to the week it ends); last month ends on its own last day in February; "this year" is the financial year |
+| Voice guard | An id the model was never offered is discarded; an unknown intent falls back to UNKNOWN; a malformed confidence reads as zero, not as certainty |
 | Formatting | Indian lakh/crore amount-in-words, financial-year boundary |
 | Print format | Indian digit grouping (12,34,567.89 not 1,234,567.89), word wrap, fixed-width columns flush to the roll edge |
 | ESC/POS | Every command's exact bytes, latin1 not utf8 encoding, feed-before-cut, drawer kicked once per job not once per copy |
@@ -950,6 +1004,8 @@ transactions are atomic and that the row locks actually serialise.
 | Cheques | Posted on receipt; clearing doesn't double-count; a bounce reopens the bill and adds bank charges; illegal status transitions refused |
 | Notes | **Tax credited at the original rate after the HSN rate changes**; the same goods can't be credited twice, across notes *or* within one; money-only notes don't consume return quota; purchase returns push stock back out; cancelling frees the quantity again |
 | ITC | Output tax netted against input credit *and* against notes on both sides; double-claiming refused; ineligible bills excluded |
+| Scanned bills | A supplier matched through decoration the database does not have; a printed GSTIN beating any name score; near-identical names refused confidence; a customer never matched as the supplier; an unmatched line flagged rather than dropped; a line with no quantity or rate left blank, since those set the cost |
+| Voice questions | A balance said the right way round — "you owe" rather than a minus sign; an unsure match offering choices instead of a figure; the last rate actually charged, scoped to the party who asked; cost figures withheld from staff who may not see them; **every intent run in turn leaves no row, balance, stock figure or number sequence changed** |
 | Printing | A real invoice row renders to a valid PDF on both column layouts; the print counter moves on print and not on preview; receipts take their width from the default profile; **a real TCP listener receives the invoice number on the wire**; a failed send doesn't count as a print; one default printer always, never zero |
 | HTTP | **A whole shop day over real HTTP** — register, sign in, set up masters, bill, take a payment, download the PDF; refresh-token rotation and reuse revoking the session; login enumeration-safe; role gates; **cross-tenant reads *and* writes rejected**; error shapes; `Content-Type`/`Content-Disposition`/`Cache-Control` on the PDF; helmet headers; the registration limiter 429ing on the sixth attempt |
 | CORS | Preflight answered with the specific origin and `Allow-Credentials`; an unconfigured origin gets no allow header at all; a request with no `Origin` still served; **never a wildcard**, which would void the credentials; `Cross-Origin-Resource-Policy: cross-origin` so a PDF can open in a new tab |
@@ -966,6 +1022,7 @@ guards and confirming it fails:
 | Drop `businessId` from the `getParty` filter | the cross-tenant read test |
 | Drop `businessId` from the `updateParty` filter | the cross-tenant write test |
 | Allow any origin in the CORS callback | the unconfigured-origin test |
+| Touch `PartyBalance.lastEntryAt` while answering a spoken balance question | the "writes absolutely nothing" test |
 
 That last row is the reason this table exists. The first attempt at the
 cross-tenant check only covered *reads*, so removing the tenant filter from

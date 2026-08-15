@@ -171,8 +171,49 @@ OPENAI_API_KEY=            # Whisper fallback only
 ## Build order
 
 1. `punjabiNumbers.ts` — **done**, 36 tests green.
-2. Trigram + phonetic candidate lookup over `Party.displayName` and
-   `Product.name` + `Product.aliasNames`.
-3. Read-only voice queries ("kinna paisa dena hai") end to end.
+2. Candidate lookup over `Party.displayName` and `Product.name` +
+   `Product.aliasNames` — **done**, `src/modules/ai/match.ts`, 15 tests.
+3. Read-only voice queries ("kinna paisa dena hai") end to end — **done**,
+   `src/modules/voice/`, 29 tests.
 4. Billing-by-voice with the confirmation card.
 5. TTS read-back once voice is in daily use.
+
+---
+
+## What was actually built, where it differs from the plan above
+
+Three deliberate departures, each of which has held up in the code:
+
+**Candidate lookup is in TypeScript, not `pg_trgm`.** `src/modules/ai/match.ts`
+is Sørensen–Dice over bigrams plus token containment. On a few hundred names it
+is a fraction of a millisecond, it needs no Postgres extension enabled on a
+managed database, and — the reason that decided it — it is a pure function, so
+the matching rules are tested directly rather than through a query. Revisit if
+the catalogue reaches thousands of rows.
+
+**Structured output comes from a forced tool call, not `output_config`.**
+`src/lib/anthropic.ts` posts to `/v1/messages` with plain `fetch`, defines one
+tool carrying the caller's JSON Schema and sets
+`tool_choice: { type: 'tool', name: 'record' }`. Same guarantee that the reply
+parses, no SDK dependency, and it matches how `notifier.ts` already talks to
+Resend. Prompt caching is not used yet — a question is a single call, so there
+is no repeated prefix to cache.
+
+**Reading a photographed supplier bill was built first**, ahead of voice. It
+shares the whole matching layer, it is the slowest job in the shop, and it is
+always done with the source document in hand — which makes it the safest place
+to find out how the extraction behaves on real paper.
+
+Two rules were added to the list above while building the query path, and both
+are enforced rather than intended:
+
+- **The model never states a figure.** It picks an intent and an id; every
+  amount, quantity and date in the answer is composed by
+  `voiceQuery.service.ts` from the database. A model that phrases the number
+  can get the number wrong, and a confidently wrong balance read out at a
+  counter is worse than no feature at all.
+- **Ids are validated against the shortlist.** `validateIntent` drops anything
+  the model returns that was not on the list it was given, so a hallucinated
+  cuid can never reach a `where` clause. `voiceQuery.test.ts` tests that
+  directly, and `voiceQuery.itest.ts` runs every intent and asserts that no
+  row, balance, stock figure or number sequence moved.
