@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
 import { badRequest, conflict, notFound } from '../../lib/errors.js';
-import { D } from '../../lib/money.js';
+import { D, ZERO } from '../../lib/money.js';
 import { STATE_CODES, validateGstin } from '../../lib/gstin.js';
 import type { RequestContext } from '../auth/auth.service.js';
 import type {
@@ -277,8 +277,19 @@ export async function getParty(businessId: string, partyId: string) {
   });
   if (!party) throw notFound('Party not found');
 
-  const [invoiceStats, oldestUnpaid] = await Promise.all([
+  /**
+   * Both sides of the relationship, because in this trade one firm is often
+   * both. A mill you buy reels from also buys back your cut waste; showing
+   * only `totalBilled` made a pure supplier read "₹0.00, 0 invoices" while
+   * lakhs moved through the account.
+   */
+  const [invoiceStats, purchaseStats, oldestUnpaid] = await Promise.all([
     prisma.salesInvoice.aggregate({
+      where: { businessId, partyId, status: 'ISSUED' },
+      _count: true,
+      _sum: { grandTotal: true },
+    }),
+    prisma.purchaseInvoice.aggregate({
       where: { businessId, partyId, status: 'ISSUED' },
       _count: true,
       _sum: { grandTotal: true },
@@ -301,25 +312,46 @@ export async function getParty(businessId: string, partyId: string) {
     stats: {
       invoiceCount: invoiceStats._count,
       totalBilled: D(invoiceStats._sum.grandTotal ?? 0),
+      purchaseCount: purchaseStats._count,
+      totalPurchased: D(purchaseStats._sum.grandTotal ?? 0),
       oldestUnpaidInvoice: oldestUnpaid,
     },
   };
 }
 
-/** Customer-wise ledger, oldest first — what gets printed and handed over. */
+/**
+ * One party's account — every document that moved their balance, either way.
+ *
+ * There is one ledger per *party*, not per role. The same firm can sell you
+ * reels in the morning and buy back cut waste in the afternoon, and the whole
+ * point of a bahi khata is that both land on one page and net off. Sales and
+ * debit notes debit the account, purchases and credit notes credit it, receipts
+ * credit and payments debit — so the sign convention holds whichever direction
+ * the trade runs, and `runningBalance` reads Dr when they owe you and Cr when
+ * you owe them.
+ */
 export async function getPartyLedger(
   businessId: string,
   partyId: string,
-  options: { fromDate?: Date; toDate?: Date; page?: number; pageSize?: number } = {},
+  options: {
+    fromDate?: Date;
+    toDate?: Date;
+    page?: number;
+    pageSize?: number;
+    /// 'asc' reads like a printed ledger; 'desc' puts the latest first, which
+    /// is what the party dialog wants.
+    order?: 'asc' | 'desc';
+  } = {},
 ) {
   const party = await prisma.party.findFirst({
     where: { id: partyId, businessId },
-    select: { id: true, displayName: true, openingBalance: true },
+    select: { id: true, displayName: true, partyType: true, openingBalance: true },
   });
   if (!party) throw notFound('Party not found');
 
   const page = Math.max(1, options.page ?? 1);
   const pageSize = Math.min(500, Math.max(1, options.pageSize ?? 100));
+  const order = options.order ?? 'desc';
 
   const where: Prisma.LedgerEntryWhereInput = {
     businessId,
@@ -334,7 +366,7 @@ export async function getPartyLedger(
       : {}),
   };
 
-  const [entries, total, totals] = await Promise.all([
+  const [entries, total, totals, brought] = await Promise.all([
     prisma.ledgerEntry.findMany({
       where,
       /**
@@ -356,13 +388,34 @@ export async function getPartyLedger(
        * Filtering still uses `entryDate`, because "March's entries" means the
        * dates on the documents, not when they were typed in.
        */
-      orderBy: [{ createdAt: 'desc' }],
+      orderBy: [{ createdAt: order }],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
     prisma.ledgerEntry.count({ where }),
     prisma.ledgerEntry.aggregate({ where, _sum: { debit: true, credit: true } }),
+    /**
+     * What the account stood at the moment the period began.
+     *
+     * Without this a date-filtered ledger is a lie: the closing balance used to
+     * be computed as the period's own debits minus its credits, so asking for
+     * "this financial year" on an account carrying ₹50,000 forward from last
+     * year reported a closing balance that ignored the ₹50,000 entirely. A
+     * statement has to start from where the last one ended.
+     */
+    options.fromDate
+      ? prisma.ledgerEntry.aggregate({
+          where: { businessId, partyId, entryDate: { lt: options.fromDate } },
+          _sum: { debit: true, credit: true },
+        })
+      : null,
   ]);
+
+  const periodDebit = D(totals._sum.debit ?? 0);
+  const periodCredit = D(totals._sum.credit ?? 0);
+  const openingBalance = brought
+    ? D(brought._sum.debit ?? 0).minus(D(brought._sum.credit ?? 0))
+    : ZERO();
 
   return {
     party,
@@ -370,9 +423,14 @@ export async function getPartyLedger(
     total,
     page,
     pageSize,
-    totalDebit: D(totals._sum.debit ?? 0),
-    totalCredit: D(totals._sum.credit ?? 0),
-    closingBalance: D(totals._sum.debit ?? 0).minus(D(totals._sum.credit ?? 0)),
+    order,
+    /// Balance carried into the period. Zero when no `fromDate` was given,
+    /// because then the period is the whole account and its own first entry is
+    /// the opening one.
+    openingBalance,
+    totalDebit: periodDebit,
+    totalCredit: periodCredit,
+    closingBalance: openingBalance.plus(periodDebit).minus(periodCredit),
   };
 }
 

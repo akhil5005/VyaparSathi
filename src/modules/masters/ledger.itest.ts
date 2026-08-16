@@ -16,10 +16,11 @@
 import { after, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, resetDatabase, disconnect } from '../../test-support/db.js';
-import { setupBillingScenario } from '../../test-support/factories.js';
+import { createTestParty, setupBillingScenario } from '../../test-support/factories.js';
 import { createSalesInvoice } from '../invoices/salesInvoice.service.js';
+import { createPurchase } from '../purchases/purchase.service.js';
 import { recordPayment } from '../payments/payment.service.js';
-import { getPartyLedger } from './party.service.js';
+import { getParty, getPartyLedger } from './party.service.js';
 
 const ctxOf = () => ({ ipAddress: '127.0.0.1', userAgent: 'itest' });
 
@@ -169,5 +170,176 @@ describe('party ledger paging (integration)', () => {
 
     assert.equal(march.total, 1);
     assert.equal(march.entries[0]!.entryDate.toISOString().slice(0, 10), '2026-03-15');
+  });
+});
+
+/**
+ * One account per firm, whichever way the trade runs.
+ *
+ * A paper merchant buys reels from a mill and sells it cut stock; the same name
+ * appears on both sides of the book. The ledger has always been keyed on the
+ * party rather than the role, but nothing proved that the two directions net
+ * off correctly on one page, or that a statement for a period starts from what
+ * the previous period left behind.
+ */
+describe('party ledger for a firm that both buys and sells (integration)', () => {
+  let scenario: Awaited<ReturnType<typeof setupBillingScenario>>;
+  let both: Awaited<ReturnType<typeof createTestParty>>;
+
+  beforeEach(async () => {
+    await resetDatabase();
+    scenario = await setupBillingScenario();
+    both = await createTestParty(scenario.ctx, {
+      displayName: 'Verma Traders',
+      partyType: 'BOTH',
+    });
+  });
+
+  after(async () => {
+    await disconnect();
+  });
+
+  /** Sells them 4 reams (₹1,120 Dr), buys 5 reams back (₹1,120 Cr). */
+  async function tradeBothWays() {
+    const { ctx, product } = scenario;
+
+    await createSalesInvoice(
+      ctx.businessId,
+      ctx.userId,
+      {
+        partyId: both.id,
+        invoiceDate: new Date(Date.UTC(2026, 4, 10)),
+        items: [{ productId: product.id, quantity: 4, rate: 250 }],
+      },
+      ctxOf(),
+    );
+
+    await createPurchase(
+      ctx.businessId,
+      ctx.userId,
+      {
+        partyId: both.id,
+        supplierInvoiceNumber: 'VT/26-27/7',
+        supplierInvoiceDate: new Date(Date.UTC(2026, 4, 20)),
+        items: [{ productId: product.id, quantity: 5, unitId: ctx.unitIds.ream, rate: 200 }],
+      },
+      ctxOf(),
+    );
+  }
+
+  it('puts a sale and a purchase to the same firm on one account, netting off', async () => {
+    const { ctx } = scenario;
+    await tradeBothWays();
+
+    const ledger = await getPartyLedger(ctx.businessId, both.id, { pageSize: 50 });
+
+    assert.equal(ledger.total, 2, 'both documents land on one ledger');
+    assert.equal(ledger.party.partyType, 'BOTH');
+
+    // A sale debits them, a purchase credits them. Equal and opposite here.
+    assert.equal(ledger.totalDebit.toString(), '1120');
+    assert.equal(ledger.totalCredit.toString(), '1120');
+    assert.equal(ledger.closingBalance.toString(), '0');
+
+    // And the cached balance agrees with the ledger it summarises.
+    const cached = await prisma.partyBalance.findUnique({ where: { partyId: both.id } });
+    assert.equal(cached!.currentBalance.toString(), '0');
+  });
+
+  it('carries the earlier balance into a date-filtered statement', async () => {
+    const { ctx, product } = scenario;
+
+    // Last year: a sale that is never paid, so ₹1,120 is carried forward.
+    await createSalesInvoice(
+      ctx.businessId,
+      ctx.userId,
+      {
+        partyId: both.id,
+        invoiceDate: new Date(Date.UTC(2026, 0, 15)),
+        items: [{ productId: product.id, quantity: 4, rate: 250 }],
+      },
+      ctxOf(),
+    );
+
+    await tradeBothWays();
+
+    // Statement for the year beginning 1 April 2026.
+    const statement = await getPartyLedger(ctx.businessId, both.id, {
+      fromDate: new Date(Date.UTC(2026, 3, 1)),
+      pageSize: 50,
+    });
+
+    assert.equal(statement.total, 2, 'January is outside the period');
+    // The whole point: the period opens where the last one closed.
+    assert.equal(statement.openingBalance.toString(), '1120');
+    assert.equal(statement.totalDebit.toString(), '1120');
+    assert.equal(statement.totalCredit.toString(), '1120');
+    assert.equal(
+      statement.closingBalance.toString(),
+      '1120',
+      'closing must include what was brought forward, not just the period movement',
+    );
+  });
+
+  it('reports no opening balance when the whole account is asked for', async () => {
+    const { ctx } = scenario;
+    await tradeBothWays();
+
+    const all = await getPartyLedger(ctx.businessId, both.id, { pageSize: 50 });
+    // Without a fromDate the period is the entire account, and its own first
+    // entry is the opening one — counting anything else would double it.
+    assert.equal(all.openingBalance.toString(), '0');
+    assert.equal(all.closingBalance.toString(), '0');
+  });
+
+  it('reads oldest first when asked to, with balances building downward', async () => {
+    const { ctx } = scenario;
+    await tradeBothWays();
+
+    const asc = await getPartyLedger(ctx.businessId, both.id, { order: 'asc', pageSize: 50 });
+    assert.equal(asc.order, 'asc');
+
+    const [first, second] = asc.entries;
+    assert.ok(first!.createdAt <= second!.createdAt, 'ascending means oldest first');
+    assert.equal(first!.debit.toString(), '1120', 'the sale comes first');
+    assert.equal(second!.credit.toString(), '1120', 'then the purchase');
+
+    // Each row follows from the one above, which is how a printed ledger reads.
+    const expected = first!.runningBalance.plus(second!.debit).minus(second!.credit);
+    assert.equal(second!.runningBalance.toString(), expected.toString());
+  });
+
+  it('counts both sides of the relationship on the party record', async () => {
+    const { ctx } = scenario;
+    await tradeBothWays();
+
+    const party = await getParty(ctx.businessId, both.id);
+
+    assert.equal(party.stats.invoiceCount, 1);
+    assert.equal(party.stats.totalBilled.toString(), '1120');
+    // Previously absent entirely, so a pure supplier read "₹0.00, 0 invoices"
+    // however much had moved through the account.
+    assert.equal(party.stats.purchaseCount, 1);
+    assert.equal(party.stats.totalPurchased.toString(), '1120');
+  });
+
+  it('keeps another firm’s entries out of this account', async () => {
+    const { ctx, customer, product } = scenario;
+    await tradeBothWays();
+
+    await createSalesInvoice(
+      ctx.businessId,
+      ctx.userId,
+      {
+        partyId: customer.id,
+        invoiceDate: new Date(Date.UTC(2026, 4, 11)),
+        items: [{ productId: product.id, quantity: 9, rate: 250 }],
+      },
+      ctxOf(),
+    );
+
+    const ledger = await getPartyLedger(ctx.businessId, both.id, { pageSize: 50 });
+    assert.equal(ledger.total, 2, 'the other customer’s bill must not appear here');
+    assert.equal(ledger.totalDebit.toString(), '1120');
   });
 });

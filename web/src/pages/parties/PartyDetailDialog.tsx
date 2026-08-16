@@ -90,7 +90,7 @@ export function PartyDetailDialog({
           <ErrorAlert error={party.error} />
         ) : p ? (
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
                 <p className="text-xs text-slate-500">
                   {balance.direction === 'settled' ? 'Account' : balance.phrase}
@@ -100,13 +100,26 @@ export function PartyDetailDialog({
                 </p>
               </div>
 
+              {/* Both sides, because one firm is often both. Showing only what
+                  we billed them made a pure supplier read "₹0.00, 0 invoices"
+                  however much had moved through the account. */}
               <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-                <p className="text-xs text-slate-500">Billed to date</p>
+                <p className="text-xs text-slate-500">Sold to them</p>
                 <p className="tabular text-xl font-semibold text-slate-900 dark:text-slate-100">
                   {formatMoney(p.stats.totalBilled)}
                 </p>
                 <p className="text-xs text-slate-400">
                   {p.stats.invoiceCount} invoice{p.stats.invoiceCount === 1 ? '' : 's'}
+                </p>
+              </div>
+
+              <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
+                <p className="text-xs text-slate-500">Bought from them</p>
+                <p className="tabular text-xl font-semibold text-slate-900 dark:text-slate-100">
+                  {formatMoney(p.stats.totalPurchased)}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {p.stats.purchaseCount} bill{p.stats.purchaseCount === 1 ? '' : 's'}
                 </p>
               </div>
 
@@ -178,7 +191,7 @@ export function PartyDetailDialog({
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Account</h3>
                 {ledger.data ? (
                   <p className="text-xs text-slate-500">
-                    Billed {formatMoney(ledger.data.totalDebit)} · Received{' '}
+                    Dr {formatMoney(ledger.data.totalDebit)} · Cr{' '}
                     {formatMoney(ledger.data.totalCredit)}
                   </p>
                 ) : null}
@@ -199,9 +212,16 @@ export function PartyDetailDialog({
                   <table className="w-full min-w-[34rem] text-sm">
                     <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800">
                       <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                        {/* Debit and Credit, not Billed and Received.
+                            Those were customer words on an account that is
+                            keyed to the firm, not the role: a purchase landed
+                            under "Received" and a payment we made landed under
+                            "Billed", so any supplier's account read backwards.
+                            Dr/Cr is also what the CA and the paper bahi khata
+                            already use. */}
                         <th className="px-3 py-2 font-medium">Entry</th>
-                        <th className="px-2 py-2 text-right font-medium">Billed</th>
-                        <th className="px-2 py-2 text-right font-medium">Received</th>
+                        <th className="px-2 py-2 text-right font-medium">Debit</th>
+                        <th className="px-2 py-2 text-right font-medium">Credit</th>
                         <th className="px-3 py-2 text-right font-medium">Balance</th>
                       </tr>
                     </thead>

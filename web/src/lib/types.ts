@@ -372,6 +372,9 @@ export interface PartyDetail extends Party {
   stats: {
     invoiceCount: number;
     totalBilled: Money;
+    /// The other side of the relationship. The same firm is often both.
+    purchaseCount: number;
+    totalPurchased: Money;
     oldestUnpaidInvoice: IsoDate | null;
   };
 }
@@ -398,11 +401,15 @@ export interface LedgerEntry {
 }
 
 export interface PartyLedgerResponse {
-  party: { id: string; displayName: string };
+  party: { id: string; displayName: string; partyType: PartyType };
   entries: LedgerEntry[];
   total: number;
   page: number;
   pageSize: number;
+  order: 'asc' | 'desc';
+  /// Balance carried into the period. Zero unless a `fromDate` was given, in
+  /// which case the account's own opening entry is inside the period already.
+  openingBalance: Money;
   totalDebit: Money;
   totalCredit: Money;
   closingBalance: Money;

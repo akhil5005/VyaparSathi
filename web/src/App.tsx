@@ -20,6 +20,7 @@ import { ProductsPage } from './pages/products/ProductsPage';
 import { PurchasesPage } from './pages/purchases/PurchasesPage';
 import { InvoicesPage } from './pages/invoices/InvoicesPage';
 import { PartiesPage } from './pages/parties/PartiesPage';
+import { LedgerPage } from './pages/ledger/LedgerPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { NotesPage } from './pages/notes/NotesPage';
 import { Gstr1Page } from './pages/returns/Gstr1Page';
@@ -70,6 +71,9 @@ export default function App() {
                 </Route>
                 <Route path="invoices" element={<InvoicesPage />} />
                 <Route path="parties" element={<PartiesPage />} />
+                {/* Read-only, and available to everyone who can view: settling
+                    an argument about a balance should not need a role. */}
+                <Route path="ledger" element={<LedgerPage />} />
                 <Route path="products" element={<ProductsPage />} />
                 {/* Every role, deliberately: Settings is manager-and-above, so
                     putting the password form there would leave a billing clerk

@@ -684,6 +684,8 @@ web/
         PartyDetailDialog.tsx  the account, line by line
         NewPartyDialog.tsx     full record incl. credit terms
         balance.ts             turns a signed balance into a direction
+      ledger/
+        LedgerPage.tsx         one firm's account for a period, oldest first
 ```
 
 **Customers and suppliers share one screen** because they share one ledger: the
@@ -707,10 +709,40 @@ a claim about the server that was never checked:
   server orders by `entryDate`, which is right for a ledger, but an invoice's
   entryDate carries a time while a payment's is midnight (it comes from a date
   input), so on a day with both, the payment sorts ahead of the sale that caused
-  it. `runningBalance` is computed at insert time, so the rows are now sorted by
-  `createdAt` — the only order in which that column is coherent. The proper fix
-  is to order by `createdAt` server-side too; until then this reorders within a
-  page rather than across a long account.
+  it. `runningBalance` is computed at insert time, so `createdAt` is the only
+  order in which that column is coherent. The client used to re-sort each page,
+  which worked within a page and could never work across pages — so once the
+  ledger paginated the workaround became the rule and `getPartyLedger` orders by
+  insertion server-side. Filtering still uses `entryDate`, because "March's
+  entries" means the dates on the documents, not when they were typed.
+
+**The Ledger screen is the bahi khata.** The party dialog answers *what happened
+lately*; **Ledger** answers *show me the year*. Same rows, same endpoint, three
+differences that matter: it reads oldest-first the way a printed account does,
+it opens with the balance brought forward from before the period, and it has
+room for a year of entries without a modal's scrollbar. Financial-year presets
+sit next to the date boxes because April–March is what a CA asks for and nobody
+should have to type it.
+
+*One account per firm, not per role.* This is the part that has to be right when
+the same name is on both sides of the book. A sale debits the account, a
+purchase credits it, a receipt credits, a payment debits — so a mill you buy
+reels from and sell cut waste to nets to one closing figure, and the page says
+it in words underneath: *"You owe AV Enterprises ₹44,009.00."* Dr/Cr is precise
+but not everyone reads it fluently, and that sentence is what the argument at
+the counter is actually about.
+
+Two bugs the screen exposed, both invisible while every party was a customer:
+
+- **The ledger columns were labelled `Billed` and `Received`** — customer words
+  on an account keyed to the firm. For any supplier they read backwards: a
+  purchase landed under "Received" and a payment we made landed under "Billed".
+  They are Debit and Credit, and now say so.
+- **A date-filtered statement ignored everything before it.** The closing
+  balance was computed as the period's own debits minus its credits, so asking
+  for this financial year on an account carrying ₹50,000 forward reported a
+  closing balance with the ₹50,000 missing. `getPartyLedger` now sums the
+  entries before `fromDate` into an opening balance and closes from there.
 
 **Invoices is read-only, deliberately.** An issued invoice carries a number that
 has gone to a customer and been reported to the government; an edit button would
@@ -968,9 +1000,10 @@ Full AI architecture and the Claude call shape: **[docs/AI_STACK.md](docs/AI_STA
 Every screen is built. The web app covers the whole trading cycle —
 **purchases** (buy from the mill, set the cost), **products &amp; stock**,
 **billing**, **invoices** (look one up, reprint, cancel), **credit notes**
-(returns and corrections), **payments** (collect, chase udhaar, bank cheques),
-**customers &amp; suppliers** with their ledgers, and **settings** — plus
-authentication and the dashboard.
+(returns and corrections), **payments** (money in from a customer, money out to
+a supplier, chase udhaar, bank cheques), **customers &amp; suppliers**,
+**ledger** (one firm's account for a period, whichever way the trade runs), and
+**settings** — plus authentication and the dashboard.
 
 It is **deployed** — one Render service serving both halves from a single
 origin, which is what makes the refresh cookie first-party without a domain of
@@ -997,7 +1030,7 @@ GSTR-1 export and backups are built; what remains:
 
 ## Test coverage
 
-**565 tests, all green** — 331 unit + 234 integration.
+**571 tests, all green** — 331 unit + 240 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 
@@ -1032,6 +1065,8 @@ transactions are atomic and that the row locks actually serialise.
 | Purchases | Moving average blends across receipts; freight lands in cost but claimable GST does not; kg→ream conversion; negative stock takes the incoming rate; **5 concurrent receipts of one product don't lose an average update**; duplicate supplier bills rejected |
 | Payments | FIFO settles oldest-first; overpayment sits on account; **6 concurrent receipts never over-allocate an invoice**; reversal reopens bills without deleting the payment |
 | Supplier payments | Money out settles purchase bills oldest-first and moves the balance the other way; the voucher takes its own `PAY/` series rather than sharing the receipt book; an advance applies to a bill entered later; **paying a firm you also sell to leaves its sales invoices untouched**; reversal reopens the supplier bill |
+| Party ledger | Newest-first by insertion so every balance follows from the row below; paging never skips, repeats or reorders; the balance stays coherent across the page seam; filtering uses the document date, not the typing date |
+| One account, both roles | A sale and a purchase to the same firm land on one ledger and net to zero; **a date-filtered statement carries the earlier balance forward instead of closing on the period's own movement**; asking for the whole account reports no opening balance rather than double-counting its first entry; ascending order builds downward; the party record counts sales *and* purchases; another firm's entries stay out |
 | Cheques | Posted on receipt; clearing doesn't double-count; a bounce reopens the bill and adds bank charges; illegal status transitions refused |
 | Notes | **Tax credited at the original rate after the HSN rate changes**; the same goods can't be credited twice, across notes *or* within one; money-only notes don't consume return quota; purchase returns push stock back out; cancelling frees the quantity again |
 | ITC | Output tax netted against input credit *and* against notes on both sides; double-claiming refused; ineligible bills excluded |
@@ -1055,6 +1090,7 @@ guards and confirming it fails:
 | Allow any origin in the CORS callback | the unconfigured-origin test |
 | Touch `PartyBalance.lastEntryAt` while answering a spoken balance question | the "writes absolutely nothing" test |
 | Drop `PURCHASE_INVOICE` and `PAYMENT_VOUCHER` from the registration seed | the "registration seeds every series" test |
+| Close a date-filtered ledger on the period's movement, ignoring what was brought forward | the "carries the earlier balance" test |
 
 That last row is the reason this table exists. The first attempt at the
 cross-tenant check only covered *reads*, so removing the tenant filter from

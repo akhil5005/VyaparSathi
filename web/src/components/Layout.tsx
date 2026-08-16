@@ -32,6 +32,7 @@ const NAV: NavItem[] = [
   { to: '/billing', label: 'New bill' },
   { to: '/invoices', label: 'Invoices' },
   { to: '/parties', label: 'Customers & suppliers' },
+  { to: '/ledger', label: 'Ledger' },
   { to: '/products', label: 'Products & stock' },
   { to: '/credit-notes', label: 'Credit notes', allow: CAN_EDIT_MASTERS },
   { to: '/purchases', label: 'Purchases', allow: CAN_EDIT_MASTERS },

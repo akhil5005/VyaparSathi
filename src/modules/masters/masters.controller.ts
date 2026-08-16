@@ -29,6 +29,22 @@ const dateRangeQuery = z.object({
   pageSize: z.coerce.number().int().positive().max(500).optional(),
 });
 
+/**
+ * The ledger reads either way round: ascending for a statement you print,
+ * descending for the "what happened lately" panel on the party dialog.
+ *
+ * `toDate` is widened to the end of its day. A date input sends `2027-03-31`,
+ * which coerces to midnight, so the plain comparison silently dropped every
+ * entry made on the closing day of the period — including, on a financial-year
+ * statement, the 31 March entries a CA is most likely to be looking for.
+ */
+const ledgerQuery = dateRangeQuery.extend({
+  order: z.enum(['asc', 'desc']).optional(),
+}).transform((q) => ({
+  ...q,
+  toDate: q.toDate ? new Date(q.toDate.getTime() + 24 * 60 * 60 * 1000 - 1) : undefined,
+}));
+
 const boolQuery = z
   .union([z.boolean(), z.string()])
   .transform((v) => v === true || v === 'true')
@@ -120,7 +136,7 @@ export const updateParty = handler(async (req, res) => {
 });
 
 export const getPartyLedger = handler(async (req, res) => {
-  const options = dateRangeQuery.parse(req.query);
+  const options = ledgerQuery.parse(req.query);
   res.json(await partyService.getPartyLedger(scopeOf(req).businessId, req.params.partyId!, options));
 });
 
