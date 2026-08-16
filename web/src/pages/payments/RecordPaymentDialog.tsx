@@ -3,7 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { useDebounced } from '../../lib/hooks';
 import { formatMoney, isPositiveAmount, todayInput } from '../../lib/money';
-import type { PartyListItem, PartyListResponse, PaymentMode } from '../../lib/types';
+import type {
+  PartyListItem,
+  PartyListResponse,
+  PaymentDirection,
+  PaymentMode,
+} from '../../lib/types';
 import { Button } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { Alert, ErrorAlert } from '../../components/Alert';
@@ -11,14 +16,45 @@ import { Field } from '../../components/Field';
 import { Combobox, type ComboboxHandle } from '../../components/Combobox';
 
 /**
- * Taking money in.
+ * Money in, or money out.
+ *
+ * Both directions run through one form because they are the same transaction
+ * seen from either side, and the server treats them as such — a receipt settles
+ * sales invoices, a payment settles purchase bills, and everything between is
+ * shared. Splitting them into two screens would duplicate the cheque handling,
+ * the party search and the allocation note for no gain.
  *
  * Deliberately does **not** ask which bills to settle. The server applies the
  * money oldest-bill-first, which is both what a shop actually does and what
- * keeps the ageing report honest; anything left over sits on the customer's
+ * keeps the ageing report honest; anything left over sits on the party's
  * account. Hand-picking bills is possible through the API and belongs on the
  * payment's own screen, not in the two-second interaction at a counter.
  */
+
+/**
+ * The words change with the direction, and they matter more than usual here:
+ * paying a supplier and being paid by a customer look identical on screen
+ * except for these, and getting one wrong puts money in the wrong ledger.
+ */
+const WORDING: Record<
+  PaymentDirection,
+  { title: string; party: string; search: string; verb: string; note: string }
+> = {
+  RECEIPT: {
+    title: 'Record money received',
+    party: 'From',
+    search: 'Customer name or phone…',
+    verb: 'Received',
+    note: "Applied to their oldest unpaid bills first. Anything left over stays on the customer's account for the next bill.",
+  },
+  PAYMENT: {
+    title: 'Record money paid out',
+    party: 'To',
+    search: 'Supplier name or phone…',
+    verb: 'Paid',
+    note: 'Applied to their oldest unpaid supplier bills first. Anything left over stays as an advance against the next bill.',
+  },
+};
 
 const MODES: { id: PaymentMode; label: string }[] = [
   { id: 'CASH', label: 'Cash' },
@@ -31,14 +67,22 @@ const MODES: { id: PaymentMode; label: string }[] = [
 export function RecordPaymentDialog({
   presetPartyId,
   presetPartyName,
+  initialDirection = 'RECEIPT',
+  /// Set when the caller already knows which way the money goes — collecting
+  /// from a named debtor, say — so the toggle would only be a way to get it
+  /// wrong.
+  lockDirection = false,
   onClose,
 }: {
   presetPartyId?: string;
   presetPartyName?: string;
+  initialDirection?: PaymentDirection;
+  lockDirection?: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
 
+  const [direction, setDirection] = useState<PaymentDirection>(initialDirection);
   const [partyId, setPartyId] = useState(presetPartyId ?? '');
   const [partyName, setPartyName] = useState(presetPartyName ?? '');
   const [partyQuery, setPartyQuery] = useState('');
@@ -57,11 +101,18 @@ export function RecordPaymentDialog({
   const debouncedParty = useDebounced(partyQuery);
   const partyPending = partyQuery.trim() !== debouncedParty.trim();
 
+  // Suppliers when paying out, customers when taking in. The server widens
+  // either to include parties marked BOTH, which is most of this trade.
   const parties = useQuery({
-    queryKey: ['parties', 'search', debouncedParty],
+    queryKey: ['parties', 'search', direction, debouncedParty],
     queryFn: () =>
       api.get<PartyListResponse>('/api/masters/parties', {
-        query: { search: debouncedParty, pageSize: 8, isActive: true },
+        query: {
+          search: debouncedParty,
+          partyType: direction === 'RECEIPT' ? 'CUSTOMER' : 'SUPPLIER',
+          pageSize: 8,
+          isActive: true,
+        },
       }),
     enabled: !presetPartyId && debouncedParty.trim().length > 0,
   });
@@ -70,7 +121,7 @@ export function RecordPaymentDialog({
     mutationFn: () =>
       api.post('/api/payments', {
         partyId,
-        direction: 'RECEIPT',
+        direction,
         amount,
         mode,
         paymentDate,
@@ -97,6 +148,7 @@ export function RecordPaymentDialog({
     },
   });
 
+  const words = WORDING[direction];
   const fieldErrors = record.error instanceof ApiError ? record.error.fieldErrors : {};
 
   const chequeReady =
@@ -120,14 +172,14 @@ export function RecordPaymentDialog({
     <Dialog
       open
       onClose={onClose}
-      title="Record payment"
+      title={words.title}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button onClick={onSubmit} loading={record.isPending} disabled={!ready}>
-            Record {isPositiveAmount(amount) ? formatMoney(amount) : ''}
+            {words.verb} {isPositiveAmount(amount) ? formatMoney(amount) : ''}
           </Button>
         </>
       }
@@ -135,16 +187,52 @@ export function RecordPaymentDialog({
       <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <ErrorAlert error={record.error} />
 
+        {lockDirection ? null : (
+          <fieldset>
+            <legend className="sr-only">Which way is the money going</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {(['RECEIPT', 'PAYMENT'] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => {
+                    if (option === direction) return;
+                    setDirection(option);
+                    // The party list is filtered by direction, so a customer
+                    // picked before the switch may not even be a supplier.
+                    // Clearing is safer than silently paying the wrong firm.
+                    setPartyId('');
+                    setPartyName('');
+                    setPartyQuery('');
+                  }}
+                  aria-pressed={direction === option}
+                  className={[
+                    'rounded-lg border px-3 py-2.5 text-sm font-medium transition',
+                    direction === option
+                      ? 'border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900'
+                      : 'border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800',
+                  ].join(' ')}
+                >
+                  {option === 'RECEIPT' ? 'Money in' : 'Money out'}
+                  <span className="mt-0.5 block text-xs font-normal opacity-70">
+                    {option === 'RECEIPT' ? 'from a customer' : 'to a supplier'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        )}
+
         {presetPartyId ? (
           <div className="rounded-lg bg-slate-50 px-3 py-2.5 dark:bg-slate-800/60">
-            <p className="text-xs text-slate-500">From</p>
+            <p className="text-xs text-slate-500">{words.party}</p>
             <p className="font-medium text-slate-900 dark:text-slate-100">{partyName}</p>
           </div>
         ) : (
           <Combobox<PartyListItem>
             ref={partyBox}
-            label="From"
-            placeholder="Customer name or phone…"
+            label={words.party}
+            placeholder={words.search}
             autoFocus
             items={parties.data?.parties ?? []}
             loading={parties.isFetching}
@@ -156,16 +244,24 @@ export function RecordPaymentDialog({
               setPartyId(p.id);
               setPartyName(p.displayName);
             }}
-            renderItem={(p) => (
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate">{p.displayName}</span>
-                {Number(p.currentBalance) > 0 ? (
-                  <span className="tabular shrink-0 text-xs text-amber-600 dark:text-amber-400">
-                    {formatMoney(p.currentBalance)} due
-                  </span>
-                ) : null}
-              </div>
-            )}
+            renderItem={(p) => {
+              // Positive means they owe us, negative means we owe them. Only
+              // the side that matches the direction is worth showing — "₹8,000
+              // due" next to a supplier you are about to pay reads backwards.
+              const balance = Number(p.currentBalance);
+              const relevant = direction === 'RECEIPT' ? balance > 0 : balance < 0;
+              return (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate">{p.displayName}</span>
+                  {relevant ? (
+                    <span className="tabular shrink-0 text-xs text-amber-600 dark:text-amber-400">
+                      {formatMoney(String(Math.abs(balance)))}{' '}
+                      {direction === 'RECEIPT' ? 'due' : 'owed'}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            }}
           />
         )}
 
@@ -250,8 +346,9 @@ export function RecordPaymentDialog({
             />
             {postDated ? (
               <Alert tone="info">
-                Post-dated. It will be recorded against the bill now, and shown as bankable once
-                that date arrives. If it later bounces, the bill reopens.
+                Post-dated. It will be recorded against the bill now, and shown as due{' '}
+                {direction === 'RECEIPT' ? 'to bank' : 'to clear'} once that date arrives. If it
+                later bounces, the bill reopens.
               </Alert>
             ) : null}
           </div>
@@ -273,8 +370,7 @@ export function RecordPaymentDialog({
         />
 
         <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60">
-          Applied to the oldest unpaid bills first. Anything left over stays on the customer's
-          account for the next bill.
+          {words.note}
         </p>
 
         <button type="submit" className="hidden" aria-hidden tabIndex={-1} />

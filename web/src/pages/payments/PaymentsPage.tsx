@@ -5,6 +5,7 @@ import { formatDate, formatMoney } from '../../lib/money';
 import type {
   ChequeListResponse,
   OutstandingResponse,
+  PaymentDirection,
   PaymentListResponse,
 } from '../../lib/types';
 import { Button } from '../../components/Button';
@@ -20,19 +21,24 @@ import { Pagination, usePage } from '../../components/Pagination';
 const PAGE_SIZE = 25;
 
 /**
- * Money coming in, and who still owes it.
+ * Money moving, and who still owes it.
  *
  * Three views of the same question, because a shopkeeper asks it three ways:
- * *who owes me* (the udhaar report, the reason this screen exists), *what came
- * in today* (the payment list), and *which cheques can I bank* (the cheque
- * list, where a post-dated cheque sits until its date arrives).
+ * *who owes me* (the udhaar report, the reason this screen exists), *what moved
+ * today* (the payment list, both directions), and *which cheques can I bank*
+ * (the cheque list, where a post-dated cheque sits until its date arrives).
+ *
+ * The ageing buckets above the tabs are receivables only. Money owed *to*
+ * suppliers is not aged here — a supplier chases you by telephone, not by
+ * report, and inventing a payables ageing screen nobody asked for would be
+ * three columns of zeroes for this shop.
  */
 
 type Tab = 'outstanding' | 'payments' | 'cheques';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'outstanding', label: 'Who owes (udhaar)' },
-  { id: 'payments', label: 'Payments received' },
+  { id: 'payments', label: 'Payments' },
   { id: 'cheques', label: 'Cheques' },
 ];
 
@@ -42,9 +48,12 @@ export function PaymentsPage() {
   // that has two pages.
   const [paymentsPage, setPaymentsPage] = usePage([tab]);
   const [chequesPage, setChequesPage] = usePage([tab]);
-  const [recording, setRecording] = useState<{ partyId?: string; partyName?: string } | null>(
-    null,
-  );
+  const [recording, setRecording] = useState<{
+    partyId?: string;
+    partyName?: string;
+    direction?: PaymentDirection;
+    lockDirection?: boolean;
+  } | null>(null);
 
   const outstanding = useQuery({
     queryKey: ['outstanding'],
@@ -79,12 +88,24 @@ export function PaymentsPage() {
             Payments &amp; udhaar
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Record money coming in, and see who still owes.
+            Record money in and out, and see who still owes.
           </p>
         </div>
-        <Button size="lg" onClick={() => setRecording({})}>
-          Record payment
-        </Button>
+        {/* Two buttons rather than one with a toggle inside: taking cash at the
+            counter is the common act and should stay one tap, while paying a
+            mill is deliberate enough to deserve naming itself. */}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="lg"
+            variant="secondary"
+            onClick={() => setRecording({ direction: 'PAYMENT' })}
+          >
+            Pay a supplier
+          </Button>
+          <Button size="lg" onClick={() => setRecording({ direction: 'RECEIPT' })}>
+            Record payment
+          </Button>
+        </div>
       </header>
 
       {/* The ageing summary, always visible — it is the number he cares about. */}
@@ -121,7 +142,13 @@ export function PaymentsPage() {
             parties={outstanding.data?.parties ?? []}
             asOf={outstanding.data?.asOf}
             onCollect={(party) =>
-              setRecording({ partyId: party.partyId, partyName: party.partyName })
+              setRecording({
+                partyId: party.partyId,
+                partyName: party.partyName,
+                // Collecting from a named debtor is unambiguously money in.
+                direction: 'RECEIPT',
+                lockDirection: true,
+              })
             }
           />
         </Section>
@@ -161,6 +188,8 @@ export function PaymentsPage() {
         <RecordPaymentDialog
           presetPartyId={recording.partyId}
           presetPartyName={recording.partyName}
+          initialDirection={recording.direction}
+          lockDirection={recording.lockDirection}
           onClose={() => setRecording(null)}
         />
       ) : null}

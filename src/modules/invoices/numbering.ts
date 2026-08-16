@@ -11,7 +11,9 @@ const DEFAULT_PREFIXES: Partial<Record<DocumentType, string>> = {
   CREDIT_NOTE: 'CN/',
   DEBIT_NOTE: 'DN/',
   DELIVERY_CHALLAN: 'DC/',
+  PURCHASE_INVOICE: 'PUR/',
   PAYMENT_RECEIPT: 'RCP/',
+  PAYMENT_VOUCHER: 'PAY/',
   PURCHASE_RETURN: 'PR/',
   QUOTATION: 'QT/',
 };

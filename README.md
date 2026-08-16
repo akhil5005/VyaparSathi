@@ -381,13 +381,21 @@ they can bill but not see cost.
 
 ### Payments, allocation and cheques — `src/modules/payments/`
 
-Complete. Closes the loop: you can now record that a customer paid.
+Complete, both directions: a customer paying you, and you paying a supplier.
 
 **Allocation settles the oldest bill first** — what a shopkeeper means by "adjust
 it against the old ones". A partial payment leaves the last touched invoice
 partly paid rather than spreading thinly across everything. You can also
 hand-pick which bills a payment clears, and anything left over sits **on
 account** as an advance until the next invoice.
+
+**Money out is the mirror image, not a second implementation.** A `RECEIPT`
+settles sales invoices and credits the party; a `PAYMENT` settles purchase bills
+and debits them. One code path branches on direction in three places —
+which table open bills come from, which column an allocation points at, and the
+sign of the balance change — so FIFO, cheques, reversal and the audit trail are
+shared rather than duplicated. Overpaying a supplier leaves them owing you,
+which is a positive balance under the "positive means they owe us" rule.
 
 **The concurrency guard is the party balance row.** Every payment for a party
 must update `PartyBalance`, so the transaction updates it *first* — that takes a
@@ -649,8 +657,8 @@ web/
       payments/
         PaymentsPage.tsx       ageing summary + three tabs
         OutstandingTable.tsx   the udhaar list, worst debtor first
-        RecordPaymentDialog.tsx  cash / UPI / cheque / transfer
-        PaymentList.tsx        what came in; reversals shown, not hidden
+        RecordPaymentDialog.tsx  money in or out; cash / UPI / cheque / transfer
+        PaymentList.tsx        what moved, both ways; reversals shown, not hidden
         ChequeList.tsx         deposit, clear, bounce
       products/
         ProductsPage.tsx       a stock report first, a catalogue second
@@ -755,17 +763,39 @@ from the mill thereafter.
 
 **Payments** answers the question three ways, because it gets asked three ways:
 *who owes me* (the udhaar report, sorted by amount rather than name — the
-question is "who do I chase today"), *what came in* (reversed payments stay on
-the list struck through; a reversal is not a deletion and the voucher may be on
-a receipt in someone's pocket), and *which cheques can I bank* (a cheque is
-routinely written weeks ahead, so Deposit stays disabled until the server says
-`bankable`).
+question is "who do I chase today"), *what moved* (both directions, reversed
+payments struck through rather than removed; a reversal is not a deletion and
+the voucher may be on a receipt in someone's pocket), and *which cheques can I
+bank* (a cheque is routinely written weeks ahead, so Deposit stays disabled
+until the server says `bankable`).
+
+*Money in and money out share one dialog, and the words change with it.* The two
+are the same transaction seen from either side, so splitting them would
+duplicate the cheque handling, the party search and the allocation note for no
+gain. What does change is every label — From/To, the search placeholder, the
+button verb — because a receipt and a supplier payment are otherwise identical
+on screen, and getting one wrong puts money in the wrong ledger. Switching the
+toggle clears the chosen party rather than carrying it across, since the party
+list is filtered by direction and a customer may not be a supplier at all. The
+list marks each row *From* or *Paid to* and shows money out with a minus and in
+red: colour alone would not survive a printed page or a colour-blind reader.
+
+The header offers **Record payment** and **Pay a supplier** as two buttons
+rather than one with a hidden toggle. Taking cash at the counter is the common
+act and stays a single tap; paying a mill is deliberate enough to deserve naming
+itself. Collecting from a named debtor in the udhaar list locks the direction —
+there, the toggle could only introduce an error.
 
 Recording a payment deliberately does **not** ask which bills to settle. The
 server applies it oldest-first, which is what a shop does anyway and what keeps
 the ageing honest; the remainder sits on account. Hand-picking bills exists in
 the API and belongs on a payment's own screen, not in a two-second interaction
 at a counter.
+
+The ageing buckets are **receivables only**. Money owed to suppliers is visible
+on each supplier's account but is not aged into a report — a mill chases you by
+telephone, not by ageing bucket, and a payables screen for this shop would be
+three columns of zeroes.
 
 **The billing screen is where the design decisions show.** Two rules govern it:
 
@@ -967,7 +997,7 @@ GSTR-1 export and backups are built; what remains:
 
 ## Test coverage
 
-**559 tests, all green** — 331 unit + 228 integration.
+**565 tests, all green** — 331 unit + 234 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 
@@ -1001,6 +1031,7 @@ transactions are atomic and that the row locks actually serialise.
 | Sales invoice | Issue writes invoice + stock + ledger + balance together; a mid-transaction failure leaves **nothing** behind; 10 concurrent invoices lose no stock; cancel reverses with contra entries and keeps the number; drafts touch nothing |
 | Purchases | Moving average blends across receipts; freight lands in cost but claimable GST does not; kg→ream conversion; negative stock takes the incoming rate; **5 concurrent receipts of one product don't lose an average update**; duplicate supplier bills rejected |
 | Payments | FIFO settles oldest-first; overpayment sits on account; **6 concurrent receipts never over-allocate an invoice**; reversal reopens bills without deleting the payment |
+| Supplier payments | Money out settles purchase bills oldest-first and moves the balance the other way; the voucher takes its own `PAY/` series rather than sharing the receipt book; an advance applies to a bill entered later; **paying a firm you also sell to leaves its sales invoices untouched**; reversal reopens the supplier bill |
 | Cheques | Posted on receipt; clearing doesn't double-count; a bounce reopens the bill and adds bank charges; illegal status transitions refused |
 | Notes | **Tax credited at the original rate after the HSN rate changes**; the same goods can't be credited twice, across notes *or* within one; money-only notes don't consume return quota; purchase returns push stock back out; cancelling frees the quantity again |
 | ITC | Output tax netted against input credit *and* against notes on both sides; double-claiming refused; ineligible bills excluded |
@@ -1023,6 +1054,7 @@ guards and confirming it fails:
 | Drop `businessId` from the `updateParty` filter | the cross-tenant write test |
 | Allow any origin in the CORS callback | the unconfigured-origin test |
 | Touch `PartyBalance.lastEntryAt` while answering a spoken balance question | the "writes absolutely nothing" test |
+| Drop `PURCHASE_INVOICE` and `PAYMENT_VOUCHER` from the registration seed | the "registration seeds every series" test |
 
 That last row is the reason this table exists. The first attempt at the
 cross-tenant check only covered *reads*, so removing the tenant filter from
@@ -1030,7 +1062,13 @@ cross-tenant check only covered *reads*, so removing the tenant filter from
 until the mutation was tried. Cross-tenant writes are now covered separately —
 update, cancel, bill-against-another-firm's-customer, and print.
 
-**Six real bugs were found this way:** the inter-state amount column was too
+**Seven real bugs were found this way:** registration seeded number series for
+five document types but not for `PURCHASE_INVOICE` or `PAYMENT_VOUCHER`, and
+`allocateDocumentNumber` creates a missing series *lazily with an empty prefix* —
+so the first supplier bill on a real deployment would have been numbered `0001`
+rather than `PUR/0001`. No test caught it because the test factory seeded both,
+making the fixture more complete than production; the new test asserts the
+seeded set exactly. The inter-state amount column was too
 narrow to hold a rupee figure without wrapping; `input.isDefault ?? existingCount === 0`
 honoured an explicit `false` and left a shop with a printer but no default;
 `z.coerce.boolean()` turned `?preview=false` into `true`, so a preview

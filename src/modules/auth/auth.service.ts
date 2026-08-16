@@ -243,7 +243,9 @@ export async function registerBusiness(input: RegisterInput, ctx: RequestContext
         { businessId: business.id, documentType: 'SALES_INVOICE' as const, financialYear, prefix: 'INV/', padding: 4 },
         { businessId: business.id, documentType: 'CREDIT_NOTE' as const, financialYear, prefix: 'CN/', padding: 4 },
         { businessId: business.id, documentType: 'DEBIT_NOTE' as const, financialYear, prefix: 'DN/', padding: 4 },
+        { businessId: business.id, documentType: 'PURCHASE_INVOICE' as const, financialYear, prefix: 'PUR/', padding: 4 },
         { businessId: business.id, documentType: 'PAYMENT_RECEIPT' as const, financialYear, prefix: 'RCP/', padding: 4 },
+        { businessId: business.id, documentType: 'PAYMENT_VOUCHER' as const, financialYear, prefix: 'PAY/', padding: 4 },
         { businessId: business.id, documentType: 'DELIVERY_CHALLAN' as const, financialYear, prefix: 'DC/', padding: 4 },
       ],
     });

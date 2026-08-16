@@ -92,6 +92,27 @@ describe('HTTP API', () => {
     const ream = units.body.units.find((u: any) => /ream/i.test(u.name));
     assert.ok(ream, `expected a Ream unit, got ${units.body.units.map((u: any) => u.name)}`);
 
+    // Registration must seed a numbered series for every document the services
+    // allocate from. A missing one is not an error — `allocateDocumentNumber`
+    // creates it lazily with an empty prefix — so the first purchase bill would
+    // silently come out as "0001" instead of "PUR/0001". That is exactly how
+    // PURCHASE_INVOICE and PAYMENT_VOUCHER went missing: the test factory
+    // seeded them, so no test ever ran the path production actually took.
+    const sequences = await prisma.numberSequence.findMany({
+      where: { business: { gstin: registration.business.gstin } },
+      select: { documentType: true, prefix: true },
+    });
+    const seeded = Object.fromEntries(sequences.map((s) => [s.documentType, s.prefix]));
+    assert.deepEqual(seeded, {
+      SALES_INVOICE: 'INV/',
+      CREDIT_NOTE: 'CN/',
+      DEBIT_NOTE: 'DN/',
+      PURCHASE_INVOICE: 'PUR/',
+      PAYMENT_RECEIPT: 'RCP/',
+      PAYMENT_VOUCHER: 'PAY/',
+      DELIVERY_CHALLAN: 'DC/',
+    });
+
     // ---- Masters: HSN at the confirmed 18%, then a product ----
     const hsn = await client.post('/api/masters/hsn', {
       code: '4802',

@@ -12,7 +12,12 @@ const MODE_LABEL: Record<PaymentMode, string> = {
 };
 
 /**
- * What has come in.
+ * What has moved, both ways.
+ *
+ * Direction is shown as a word and a sign rather than colour alone: a receipt
+ * and a supplier payment are otherwise the same row, and mistaking one for the
+ * other is the kind of error that survives until somebody reconciles a bank
+ * statement.
  *
  * A reversed payment stays on the list, struck through — reversing is not
  * deleting. The voucher number was issued, it may be on a receipt in someone's
@@ -39,20 +44,20 @@ export function PaymentList({
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <div className="flex flex-wrap gap-6 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-        <Summary label="Total received" value={totalAmount} />
+        <Summary label="Total on this page" value={totalAmount} />
         <Summary
           label="Still on account"
           value={totalOnAccount}
-          hint="Taken but not yet applied to a bill"
+          hint="Recorded but not yet applied to a bill"
         />
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[44rem] text-sm">
+        <table className="w-full min-w-[46rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:bg-slate-800/50">
               <th className="px-4 py-2.5 font-medium">Voucher</th>
-              <th className="px-3 py-2.5 font-medium">From</th>
+              <th className="px-3 py-2.5 font-medium">Party</th>
               <th className="px-3 py-2.5 font-medium">How</th>
               <th className="px-3 py-2.5 text-right font-medium">Amount</th>
               <th className="px-4 py-2.5 text-right font-medium">On account</th>
@@ -63,6 +68,7 @@ export function PaymentList({
             {payments.map((payment) => {
               const reversed = Boolean(payment.reversedAt);
               const onAccount = Number(payment.unallocatedAmount) > 0;
+              const out = payment.direction === 'PAYMENT';
 
               return (
                 <tr
@@ -83,6 +89,9 @@ export function PaymentList({
                   </td>
 
                   <td className="px-3 py-3 text-slate-900 dark:text-slate-100">
+                    <span className="mr-2 rounded px-1.5 py-0.5 text-xs font-medium ring-1 ring-inset ring-slate-300 dark:ring-slate-700">
+                      {out ? 'Paid to' : 'From'}
+                    </span>
                     {payment.party?.displayName ?? '—'}
                     {reversed ? (
                       <p className="text-xs text-rose-600 dark:text-rose-400">
@@ -104,7 +113,15 @@ export function PaymentList({
                     ) : null}
                   </td>
 
-                  <td className="tabular px-3 py-3 text-right font-medium text-slate-900 dark:text-slate-100">
+                  <td
+                    className={[
+                      'tabular px-3 py-3 text-right font-medium',
+                      out
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-slate-900 dark:text-slate-100',
+                    ].join(' ')}
+                  >
+                    {out ? '−' : ''}
                     {formatMoney(payment.amount)}
                   </td>
 
