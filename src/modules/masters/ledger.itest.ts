@@ -323,6 +323,83 @@ describe('party ledger for a firm that both buys and sells (integration)', () =>
     assert.equal(party.stats.totalPurchased.toString(), '1120');
   });
 
+  /**
+   * The shape of the first real supplier account on the live shop.
+   *
+   * AV Enterprises billed on 14 August 2026 and was paid in full on the 16th,
+   * and this pins what the Ledger screen must show for the financial year
+   * containing both: nothing brought forward, a purchase that leaves us owing,
+   * a payment that clears it, nil at the close. The dates and the sequence are
+   * the real case; the amounts are the fixture's, which taxes at 12% rather
+   * than the 18% the shop actually charges.
+   */
+  it('shows a real supplier bill and its payment netting to nil over the year', async () => {
+    const { ctx, product } = scenario;
+
+    const supplier = await createTestParty(ctx, {
+      displayName: 'AV Enterprises',
+      partyType: 'SUPPLIER',
+    });
+
+    await createPurchase(
+      ctx.businessId,
+      ctx.userId,
+      {
+        partyId: supplier.id,
+        supplierInvoiceNumber: 'AV/26-27/549',
+        supplierInvoiceDate: new Date(Date.UTC(2026, 7, 14)),
+        items: [{ productId: product.id, quantity: 100, unitId: ctx.unitIds.ream, rate: 200 }],
+      },
+      ctxOf(),
+    );
+
+    await recordPayment(
+      ctx.businessId,
+      ctx.userId,
+      {
+        partyId: supplier.id,
+        direction: 'PAYMENT',
+        amount: 22400,
+        mode: 'BANK_TRANSFER',
+        paymentDate: new Date(Date.UTC(2026, 7, 16)),
+      },
+      ctxOf(),
+    );
+
+    // Exactly what the FY 2026-27 preset asks for.
+    const fy = await getPartyLedger(ctx.businessId, supplier.id, {
+      fromDate: new Date(Date.UTC(2026, 3, 1)),
+      toDate: new Date(Date.UTC(2027, 2, 31, 23, 59, 59, 999)),
+      order: 'asc',
+      pageSize: 50,
+    });
+
+    assert.equal(fy.openingBalance.toString(), '0', 'nothing precedes the year');
+    assert.equal(fy.total, 2);
+
+    const [purchase, payment] = fy.entries;
+    assert.equal(purchase!.voucherType, 'PURCHASE_INVOICE');
+    assert.equal(purchase!.credit.toString(), '22400');
+    assert.equal(purchase!.runningBalance.toString(), '-22400', 'a purchase leaves us owing them');
+
+    assert.equal(payment!.voucherType, 'PAYMENT');
+    assert.equal(payment!.debit.toString(), '22400');
+    assert.equal(payment!.runningBalance.toString(), '0');
+
+    assert.equal(fy.closingBalance.toString(), '0', 'settled by the end of the year');
+
+    // The closing day of the financial year must be inside the window — a date
+    // input sends midnight, which used to drop every entry made on 31 March.
+    const lastDay = await getPartyLedger(ctx.businessId, supplier.id, {
+      fromDate: new Date(Date.UTC(2026, 7, 16)),
+      toDate: new Date(Date.UTC(2026, 7, 16, 23, 59, 59, 999)),
+      pageSize: 50,
+    });
+    assert.equal(lastDay.total, 1, 'the payment falls on the closing day of the range');
+    assert.equal(lastDay.openingBalance.toString(), '-22400', 'brought forward from the 14th');
+    assert.equal(lastDay.closingBalance.toString(), '0');
+  });
+
   it('keeps another firm’s entries out of this account', async () => {
     const { ctx, customer, product } = scenario;
     await tradeBothWays();

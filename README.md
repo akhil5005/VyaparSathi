@@ -722,7 +722,11 @@ differences that matter: it reads oldest-first the way a printed account does,
 it opens with the balance brought forward from before the period, and it has
 room for a year of entries without a modal's scrollbar. Financial-year presets
 sit next to the date boxes because April–March is what a CA asks for and nobody
-should have to type it.
+should have to type it. The preset reads `fyStartMonth` off the shop's own
+record rather than hardcoding April: it will never be anything else in this
+trade, but the server already treats it as configurable, and a preset that
+quietly disagreed with the server's idea of a financial year would produce a
+statement whose boundaries nobody could explain.
 
 *One account per firm, not per role.* This is the part that has to be right when
 the same name is on both sides of the book. A sale debits the account, a
@@ -1030,7 +1034,7 @@ GSTR-1 export and backups are built; what remains:
 
 ## Test coverage
 
-**571 tests, all green** — 331 unit + 240 integration.
+**572 tests, all green** — 331 unit + 241 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 
@@ -1066,7 +1070,7 @@ transactions are atomic and that the row locks actually serialise.
 | Payments | FIFO settles oldest-first; overpayment sits on account; **6 concurrent receipts never over-allocate an invoice**; reversal reopens bills without deleting the payment |
 | Supplier payments | Money out settles purchase bills oldest-first and moves the balance the other way; the voucher takes its own `PAY/` series rather than sharing the receipt book; an advance applies to a bill entered later; **paying a firm you also sell to leaves its sales invoices untouched**; reversal reopens the supplier bill |
 | Party ledger | Newest-first by insertion so every balance follows from the row below; paging never skips, repeats or reorders; the balance stays coherent across the page seam; filtering uses the document date, not the typing date |
-| One account, both roles | A sale and a purchase to the same firm land on one ledger and net to zero; **a date-filtered statement carries the earlier balance forward instead of closing on the period's own movement**; asking for the whole account reports no opening balance rather than double-counting its first entry; ascending order builds downward; the party record counts sales *and* purchases; another firm's entries stay out |
+| One account, both roles | A sale and a purchase to the same firm land on one ledger and net to zero; **a date-filtered statement carries the earlier balance forward instead of closing on the period's own movement**; asking for the whole account reports no opening balance rather than double-counting its first entry; ascending order builds downward; the party record counts sales *and* purchases; the first real supplier account is reproduced date for date, including an entry on the closing day of the range; another firm's entries stay out |
 | Cheques | Posted on receipt; clearing doesn't double-count; a bounce reopens the bill and adds bank charges; illegal status transitions refused |
 | Notes | **Tax credited at the original rate after the HSN rate changes**; the same goods can't be credited twice, across notes *or* within one; money-only notes don't consume return quota; purchase returns push stock back out; cancelling frees the quantity again |
 | ITC | Output tax netted against input credit *and* against notes on both sides; double-claiming refused; ineligible bills excluded |

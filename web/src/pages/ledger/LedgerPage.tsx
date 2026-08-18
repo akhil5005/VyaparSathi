@@ -14,6 +14,7 @@ import { Spinner } from '../../components/Spinner';
 import { Field } from '../../components/Field';
 import { Combobox, type ComboboxHandle } from '../../components/Combobox';
 import { Pagination, usePage } from '../../components/Pagination';
+import { useAuth } from '../../auth/AuthProvider';
 import { readBalance } from '../parties/balance';
 
 /**
@@ -37,25 +38,46 @@ const PAGE_SIZE = 50;
 /**
  * The Indian financial year runs April to March, so "this year" is not the
  * calendar year and a CA asking for a statement means this window.
+ *
+ * `fyStartMonth` is 1-based and comes from the shop's own record rather than
+ * being hardcoded to April. It defaults to 4 and in this trade will never be
+ * anything else — but the server already treats it as configurable, and a
+ * preset that quietly disagreed with the server's idea of a financial year
+ * would produce a statement whose boundaries nobody could explain.
  */
-function financialYear(offset = 0): { from: string; to: string; label: string } {
+function financialYear(
+  fyStartMonth: number,
+  offset = 0,
+): { from: string; to: string; label: string } {
   const now = new Date();
-  const startYear = (now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1) + offset;
+  const startYear =
+    (now.getMonth() + 1 >= fyStartMonth ? now.getFullYear() : now.getFullYear() - 1) + offset;
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const from = `${startYear}-${pad(fyStartMonth)}-01`;
+  // The instant before the next year's start, expressed as a date. Going via
+  // day 0 of the following month avoids hardcoding 31 March and gets February
+  // right when the start month is not April.
+  const end = new Date(Date.UTC(startYear + 1, fyStartMonth - 1, 0));
+  const to = `${end.getUTCFullYear()}-${pad(end.getUTCMonth() + 1)}-${pad(end.getUTCDate())}`;
+
   return {
-    from: `${startYear}-04-01`,
-    to: `${startYear + 1}-03-31`,
-    label: `FY ${startYear}–${String(startYear + 1).slice(2)}`,
+    from,
+    to,
+    label: `FY ${startYear}–${String((startYear + 1) % 100).padStart(2, '0')}`,
   };
 }
 
 export function LedgerPage() {
+  const { business } = useAuth();
   // Only the id is held here — the name shown in the heading comes back with
   // the ledger, so there is no second copy to drift out of step.
   const [partyId, setPartyId] = useState('');
   const [partyQuery, setPartyQuery] = useState('');
 
-  const thisYear = useMemo(() => financialYear(), []);
-  const lastYear = useMemo(() => financialYear(-1), []);
+  const fyStartMonth = business?.fyStartMonth ?? 4;
+  const thisYear = useMemo(() => financialYear(fyStartMonth), [fyStartMonth]);
+  const lastYear = useMemo(() => financialYear(fyStartMonth, -1), [fyStartMonth]);
 
   const [fromDate, setFromDate] = useState(thisYear.from);
   const [toDate, setToDate] = useState(thisYear.to);
