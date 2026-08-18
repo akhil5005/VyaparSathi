@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { InvoiceStatus, NoteReason, NoteType } from '@prisma/client';
 
 const decimalString = (label: string) =>
@@ -31,7 +32,7 @@ export const createNoteSchema = z.object({
 
   reason: z.nativeEnum(NoteReason),
   reasonNote: z.string().trim().max(500).optional(),
-  noteDate: z.coerce.date().optional(),
+  noteDate: businessDate().optional(),
 
   items: z.array(noteItemSchema).min(1, 'Add at least one line').max(200),
 
@@ -52,8 +53,8 @@ export const listNotesQuerySchema = z.object({
   noteType: z.nativeEnum(NoteType).optional(),
   status: z.nativeEnum(InvoiceStatus).optional(),
   reason: z.nativeEnum(NoteReason).optional(),
-  fromDate: z.coerce.date().optional(),
-  toDate: z.coerce.date().optional(),
+  fromDate: businessDate().optional(),
+  toDate: businessDate().optional(),
   search: z.string().max(100).optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),

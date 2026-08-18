@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { InvoiceStatus } from '@prisma/client';
 
 /// Accepts a number or a numeric string (forms send strings) and keeps it as a
@@ -34,8 +35,8 @@ export const invoiceItemSchema = z
 
 export const createSalesInvoiceSchema = z.object({
   partyId: z.string().min(1, 'Select a customer'),
-  invoiceDate: z.coerce.date().optional(),
-  dueDate: z.coerce.date().optional(),
+  invoiceDate: businessDate().optional(),
+  dueDate: businessDate().optional(),
   items: z.array(invoiceItemSchema).min(1, 'Add at least one item').max(200),
   freightCharges: nonNegativeDecimal('Freight').optional(),
   otherCharges: nonNegativeDecimal('Other charges').optional(),
@@ -58,8 +59,8 @@ export const cancelInvoiceSchema = z.object({
 export const listInvoicesQuerySchema = z.object({
   partyId: z.string().optional(),
   status: z.nativeEnum(InvoiceStatus).optional(),
-  fromDate: z.coerce.date().optional(),
-  toDate: z.coerce.date().optional(),
+  fromDate: businessDate().optional(),
+  toDate: businessDate().optional(),
   unpaidOnly: z
     .union([z.boolean(), z.string()])
     .transform((v) => v === true || v === 'true')

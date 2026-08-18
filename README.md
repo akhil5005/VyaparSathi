@@ -747,6 +747,16 @@ Two bugs the screen exposed, both invisible while every party was a customer:
   for this financial year on an account carrying ₹50,000 forward reported a
   closing balance with the ₹50,000 missing. `getPartyLedger` now sums the
   entries before `fromDate` into an opening balance and closes from there.
+  Worse than a wrong total: on a supplier account it inverted the *direction*,
+  so a bill you had already paid read as money owed **to** you.
+- **A mistyped year returned a 500.** A native date input's year is a
+  free-typed segment, so one stray keystroke sends `82026-04-01` — a perfectly
+  valid JavaScript `Date`, waved through by `z.coerce.date()`, and then a
+  server error from deep in the driver. The operator saw *"Something went wrong
+  on our side"* when the only thing wrong was a typo in the box in front of
+  them. Found by fat-fingering the live ledger. Every date crossing the HTTP
+  boundary now goes through `businessDate()` in `src/lib/dates.ts`, bounded to
+  1900–2100 — thirty call sites, because it was never one endpoint's bug.
 
 **Invoices is read-only, deliberately.** An issued invoice carries a number that
 has gone to a customer and been reported to the government; an edit button would
@@ -1034,7 +1044,7 @@ GSTR-1 export and backups are built; what remains:
 
 ## Test coverage
 
-**572 tests, all green** — 331 unit + 241 integration.
+**580 tests, all green** — 338 unit + 242 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 
@@ -1051,6 +1061,7 @@ GSTR-1 export and backups are built; what remains:
 | Spoken periods | Week starts Monday (and Sunday belongs to the week it ends); last month ends on its own last day in February; "this year" is the financial year |
 | Voice guard | An id the model was never offered is discarded; an unknown intent falls back to UNKNOWN; a malformed confidence reads as zero, not as certainty |
 | Formatting | Indian lakh/crore amount-in-words, financial-year boundary |
+| Date bounds | The mistyped year that returned a 500 is refused; the message names the field so the operator knows which box to fix; the 1900 and 2100 boundaries themselves are allowed, one day past is not |
 | Print format | Indian digit grouping (12,34,567.89 not 1,234,567.89), word wrap, fixed-width columns flush to the roll edge |
 | ESC/POS | Every command's exact bytes, latin1 not utf8 encoding, feed-before-cut, drawer kicked once per job not once per copy |
 | Receipt | Never exceeds 32 or 48 chars, CGST/SGST vs IGST by supply type, zero charges omitted, long names wrap not truncate |
@@ -1077,7 +1088,7 @@ transactions are atomic and that the row locks actually serialise.
 | Scanned bills | A supplier matched through decoration the database does not have; a printed GSTIN beating any name score; near-identical names refused confidence; a customer never matched as the supplier; an unmatched line flagged rather than dropped; a line with no quantity or rate left blank, since those set the cost |
 | Voice questions | A balance said the right way round — "you owe" rather than a minus sign; an unsure match offering choices instead of a figure; the last rate actually charged, scoped to the party who asked; cost figures withheld from staff who may not see them; **every intent run in turn leaves no row, balance, stock figure or number sequence changed** |
 | Printing | A real invoice row renders to a valid PDF on both column layouts; the print counter moves on print and not on preview; receipts take their width from the default profile; **a real TCP listener receives the invoice number on the wire**; a failed send doesn't count as a print; one default printer always, never zero |
-| HTTP | **A whole shop day over real HTTP** — register, sign in, set up masters, bill, take a payment, download the PDF; refresh-token rotation and reuse revoking the session; login enumeration-safe; role gates; **cross-tenant reads *and* writes rejected**; error shapes; `Content-Type`/`Content-Disposition`/`Cache-Control` on the PDF; helmet headers; the registration limiter 429ing on the sixth attempt |
+| HTTP | **A whole shop day over real HTTP** — register, sign in, set up masters, bill, take a payment, download the PDF; refresh-token rotation and reuse revoking the session; login enumeration-safe; role gates; **cross-tenant reads *and* writes rejected**; error shapes; **a mistyped year in a date query is a 400 with a reason, not a 500**; `Content-Type`/`Content-Disposition`/`Cache-Control` on the PDF; helmet headers; the registration limiter 429ing on the sixth attempt |
 | CORS | Preflight answered with the specific origin and `Allow-Credentials`; an unconfigured origin gets no allow header at all; a request with no `Origin` still served; **never a wildcard**, which would void the credentials; `Cross-Origin-Resource-Policy: cross-origin` so a PDF can open in a new tab |
 | Auth exposure | The user object is asserted field-by-field against an **exact allowlist** on register, login and `/me` — not just "does it contain passwordHash", which is why `tokenVersion`, `failedLoginCount` and `lockedUntil` were reaching the browser unnoticed |
 
@@ -1095,6 +1106,7 @@ guards and confirming it fails:
 | Touch `PartyBalance.lastEntryAt` while answering a spoken balance question | the "writes absolutely nothing" test |
 | Drop `PURCHASE_INVOICE` and `PAYMENT_VOUCHER` from the registration seed | the "registration seeds every series" test |
 | Close a date-filtered ledger on the period's movement, ignoring what was brought forward | the "carries the earlier balance" test |
+| Accept an unbounded year on a date query parameter | the "out-of-range year is a validation error" test |
 
 That last row is the reason this table exists. The first attempt at the
 cross-tenant check only covered *reads*, so removing the tenant filter from
@@ -1102,7 +1114,12 @@ cross-tenant check only covered *reads*, so removing the tenant filter from
 until the mutation was tried. Cross-tenant writes are now covered separately —
 update, cancel, bill-against-another-firm's-customer, and print.
 
-**Seven real bugs were found this way:** registration seeded number series for
+**Eight real bugs were found this way**, the newest by fat-fingering a date box
+on the live site: `z.coerce.date()` accepts any year JavaScript can represent,
+so a mistyped `82026` sailed through validation and 500'd in the driver. It was
+never one endpoint's bug — thirty call sites took an unbounded date — so the
+fix is a shared `businessDate()` rather than a guard on the ledger. Also:
+registration seeded number series for
 five document types but not for `PURCHASE_INVOICE` or `PAYMENT_VOUCHER`, and
 `allocateDocumentNumber` creates a missing series *lazily with an empty prefix* —
 so the first supplier bill on a real deployment would have been numbered `0001`

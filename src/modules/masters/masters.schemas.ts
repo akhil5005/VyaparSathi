@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { GstRegistrationType, PartyType } from '@prisma/client';
 import { gstinSchema, phoneSchema } from '../auth/auth.schemas.js';
 import { STATE_CODES } from '../../lib/gstin.js';
@@ -52,7 +53,7 @@ export const createHsnSchema = z.object({
   /// Optional first rate, so the common case is one call.
   gstRate: nonNegativeDecimal('GST rate').optional(),
   cessRate: nonNegativeDecimal('Cess rate').optional(),
-  effectiveFrom: z.coerce.date().optional(),
+  effectiveFrom: businessDate().optional(),
 });
 
 export const updateHsnSchema = z.object({
@@ -67,7 +68,7 @@ export const addHsnRateSchema = z.object({
   cessRate: nonNegativeDecimal('Cess rate').optional(),
   /// The date the new rate starts applying. The previous open rate is closed
   /// the instant before this.
-  effectiveFrom: z.coerce.date(),
+  effectiveFrom: businessDate(),
   notes: z.string().max(300).optional(),
 });
 
@@ -99,7 +100,7 @@ export const createPartySchema = z
 
     /// Positive = they owe us, as at the switchover date.
     openingBalance: decimalString('Opening balance').optional(),
-    openingBalanceDate: z.coerce.date().optional(),
+    openingBalanceDate: businessDate().optional(),
     creditLimit: nonNegativeDecimal('Credit limit').optional(),
     creditDays: z.number().int().min(0).max(365).optional(),
 
@@ -131,7 +132,7 @@ export const setPartyRateSchema = z.object({
   productId: z.string().min(1),
   unitId: z.string().min(1),
   rate: nonNegativeDecimal('Rate'),
-  effectiveFrom: z.coerce.date().optional(),
+  effectiveFrom: businessDate().optional(),
 });
 
 export const listPartiesQuerySchema = z.object({
@@ -205,14 +206,14 @@ export const openingStockSchema = z.object({
   quantity: nonNegativeDecimal('Quantity'),
   /// Cost per base unit. Seeds the weighted-average cost used for margin.
   ratePerBaseUnit: nonNegativeDecimal('Rate'),
-  asOfDate: z.coerce.date().optional(),
+  asOfDate: businessDate().optional(),
 });
 
 export const adjustStockSchema = z.object({
   /// Signed: negative for damage or shrinkage.
   quantity: decimalString('Quantity').refine((v) => Number(v) !== 0, 'Quantity cannot be zero'),
   reason: z.string().trim().min(3, 'Give a reason — it goes on the audit trail').max(300),
-  asOfDate: z.coerce.date().optional(),
+  asOfDate: businessDate().optional(),
 });
 
 export const listProductsQuerySchema = z.object({

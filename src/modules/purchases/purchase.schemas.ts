@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { InvoiceStatus } from '@prisma/client';
 
 const decimalString = (label: string) =>
@@ -41,7 +42,7 @@ export const createPurchaseSchema = z.object({
   /// The number printed on the supplier's bill. This is what GSTR-2B
   /// reconciliation matches on, so it matters more than our own reference.
   supplierInvoiceNumber: z.string().trim().min(1).max(50),
-  supplierInvoiceDate: z.coerce.date(),
+  supplierInvoiceDate: businessDate(),
 
   items: z.array(purchaseItemSchema).min(1, 'Add at least one item').max(200),
 
@@ -79,8 +80,8 @@ export const claimItcSchema = z.object({
 export const listPurchasesQuerySchema = z.object({
   partyId: z.string().optional(),
   status: z.nativeEnum(InvoiceStatus).optional(),
-  fromDate: z.coerce.date().optional(),
-  toDate: z.coerce.date().optional(),
+  fromDate: businessDate().optional(),
+  toDate: businessDate().optional(),
   unpaidOnly: z
     .union([z.boolean(), z.string()])
     .transform((v) => v === true || v === 'true')
@@ -99,8 +100,8 @@ export const gstSummaryQuerySchema = z
   .object({
     /// Either a period, or an explicit range.
     period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
-    fromDate: z.coerce.date().optional(),
-    toDate: z.coerce.date().optional(),
+    fromDate: businessDate().optional(),
+    toDate: businessDate().optional(),
   })
   .refine((v) => v.period !== undefined || (v.fromDate !== undefined && v.toDate !== undefined), {
     message: 'Give a period like 2026-07, or both fromDate and toDate',

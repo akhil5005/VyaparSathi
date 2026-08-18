@@ -1056,6 +1056,35 @@ describe('HTTP API', () => {
       assert.equal(response.body.error.code, 'VALIDATION_ERROR');
     });
 
+    /**
+     * Found on the live ledger screen. A native date input's year is a
+     * free-typed segment, so one stray keystroke sent `82026-04-01` — a valid
+     * JavaScript Date, accepted by `z.coerce.date()`, and then a 500 from deep
+     * in the driver. The operator saw "Something went wrong on our side" when
+     * the only thing wrong was a typo in a box in front of them.
+     */
+    it('rejects an out-of-range year as a validation error, not a server error', async () => {
+      const party = await client.post('/api/masters/parties', {
+        displayName: 'Ledger Date Traders',
+        stateCode: '03',
+      });
+      assert.equal(party.status, 201, JSON.stringify(party.body));
+
+      const response = await client.get(
+        `/api/masters/parties/${party.body.party.id}/ledger?fromDate=82026-04-01`,
+      );
+
+      assert.equal(response.status, 400, 'a mistyped year must not reach the database');
+      assert.equal(response.body.error.code, 'VALIDATION_ERROR');
+      assert.match(JSON.stringify(response.body.error.fields), /check the year/);
+
+      // And the same date typed correctly still works.
+      const ok = await client.get(
+        `/api/masters/parties/${party.body.party.id}/ledger?fromDate=2026-04-01`,
+      );
+      assert.equal(ok.status, 200);
+    });
+
     it('404s an unknown route with a usable message', async () => {
       const response = await client.get('/api/does-not-exist');
       assert.equal(response.status, 404);

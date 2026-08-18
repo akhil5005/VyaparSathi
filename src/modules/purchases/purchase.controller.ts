@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { contextOf, handler, scopeOf } from '../../lib/http.js';
 import * as purchaseService from './purchase.service.js';
 import * as itcService from './itc.service.js';
@@ -70,7 +71,7 @@ export const unclaimItc = handler(async (req, res) => {
 });
 
 export const pendingItc = handler(async (req, res) => {
-  const beforeDate = z.coerce.date().optional().parse(req.query.beforeDate);
+  const beforeDate = businessDate().optional().parse(req.query.beforeDate);
   res.json(await itcService.getPendingItc(scopeOf(req).businessId, beforeDate));
 });
 

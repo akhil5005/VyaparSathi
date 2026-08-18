@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { ChequeStatus, PaymentDirection, PaymentMode } from '@prisma/client';
 
 const decimalString = (label: string) =>
@@ -19,7 +20,7 @@ export const chequeDetailsSchema = z.object({
   branchName: z.string().trim().max(120).optional(),
   /// The date written on the cheque. Often weeks ahead — that is the whole
   /// point of tracking cheques separately.
-  chequeDate: z.coerce.date(),
+  chequeDate: businessDate(),
 });
 
 export const explicitAllocationSchema = z.object({
@@ -33,7 +34,7 @@ export const recordPaymentSchema = z
     direction: z.nativeEnum(PaymentDirection),
     amount: positiveDecimal('Amount'),
     mode: z.nativeEnum(PaymentMode),
-    paymentDate: z.coerce.date().optional(),
+    paymentDate: businessDate().optional(),
 
     referenceNumber: z.string().trim().max(60).optional(),
     bankName: z.string().trim().max(120).optional(),
@@ -74,20 +75,20 @@ export const bounceChequeSchema = z.object({
   reason: z.string().trim().min(3, 'Give the bank return reason').max(300),
   /// Bank charges recovered from the party. Posted to their ledger.
   bounceCharges: nonNegativeDecimal('Bounce charges').optional(),
-  bouncedOn: z.coerce.date().optional(),
+  bouncedOn: businessDate().optional(),
 });
 
 export const updateChequeStatusSchema = z.object({
   status: z.nativeEnum(ChequeStatus),
-  onDate: z.coerce.date().optional(),
+  onDate: businessDate().optional(),
 });
 
 export const listPaymentsQuerySchema = z.object({
   partyId: z.string().optional(),
   direction: z.nativeEnum(PaymentDirection).optional(),
   mode: z.nativeEnum(PaymentMode).optional(),
-  fromDate: z.coerce.date().optional(),
-  toDate: z.coerce.date().optional(),
+  fromDate: businessDate().optional(),
+  toDate: businessDate().optional(),
   /// Payments with money still sitting on account.
   unallocatedOnly: z
     .union([z.boolean(), z.string()])
@@ -107,14 +108,14 @@ export const listChequesQuerySchema = z.object({
   status: z.nativeEnum(ChequeStatus).optional(),
   direction: z.nativeEnum(PaymentDirection).optional(),
   /// Cheques whose written date falls on or before this — "what can I bank?".
-  dueBy: z.coerce.date().optional(),
+  dueBy: businessDate().optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(200).optional(),
 });
 
 export const outstandingQuerySchema = z.object({
   partyId: z.string().optional(),
-  asOf: z.coerce.date().optional(),
+  asOf: businessDate().optional(),
   /// Only parties owing at least this much — hides the ₹40 stragglers.
   minBalance: nonNegativeDecimal('Minimum balance').optional(),
 });

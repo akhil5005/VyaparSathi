@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { contextOf, handler, scopeOf } from '../../lib/http.js';
 import * as paymentService from './payment.service.js';
 import * as chequeService from './cheque.service.js';
@@ -12,7 +13,7 @@ import {
   reversePaymentSchema,
 } from './payment.schemas.js';
 
-const onDateSchema = z.object({ onDate: z.coerce.date().optional() });
+const onDateSchema = z.object({ onDate: businessDate().optional() });
 
 // ---------------------------------------------------------------------------
 // Payments

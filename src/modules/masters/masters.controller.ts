@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDate } from '../../lib/dates.js';
 import { contextOf, handler, scopeOf } from '../../lib/http.js';
 import * as unitService from './unit.service.js';
 import * as hsnService from './hsn.service.js';
@@ -23,8 +24,8 @@ import {
 } from './masters.schemas.js';
 
 const dateRangeQuery = z.object({
-  fromDate: z.coerce.date().optional(),
-  toDate: z.coerce.date().optional(),
+  fromDate: businessDate().optional(),
+  toDate: businessDate().optional(),
   page: z.coerce.number().int().positive().optional(),
   pageSize: z.coerce.number().int().positive().max(500).optional(),
 });
