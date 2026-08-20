@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import { useDebounced } from '../../lib/hooks';
 import { formatDate, formatMoney } from '../../lib/money';
 import type {
@@ -114,6 +114,15 @@ export function LedgerPage() {
   const opening = readBalance(data?.openingBalance);
   const closing = readBalance(data?.closingBalance);
 
+  /**
+   * The dates are query parameters, not a submitted form, but a rejected one is
+   * still a field error and belongs on the box that caused it. Without this the
+   * page showed "Some fields need correcting — see below" with nothing below,
+   * which is how a typo in the year read after it stopped being a 500.
+   */
+  const fieldErrors = ledger.error instanceof ApiError ? ledger.error.fieldErrors : {};
+  const dateRejected = Boolean(fieldErrors['fromDate'] ?? fieldErrors['toDate']);
+
   function applyYear(year: { from: string; to: string }) {
     setFromDate(year.from);
     setToDate(year.to);
@@ -164,12 +173,14 @@ export function LedgerPage() {
             type="date"
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
+            error={fieldErrors['fromDate']}
           />
           <Field
             label="To"
             type="date"
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
+            error={fieldErrors['toDate']}
           />
         </div>
 
@@ -218,6 +229,10 @@ export function LedgerPage() {
         <div className="flex justify-center py-20">
           <Spinner className="h-6 w-6 text-slate-400" />
         </div>
+      ) : dateRejected ? (
+        // The reason is already printed under the offending date box; repeating
+        // it here would say the same thing twice in two places.
+        null
       ) : ledger.error ? (
         <ErrorAlert error={ledger.error} />
       ) : data ? (
