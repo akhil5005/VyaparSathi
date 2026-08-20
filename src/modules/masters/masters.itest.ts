@@ -13,7 +13,7 @@ import { prisma, resetDatabase, disconnect } from '../../test-support/db.js';
 import { createTestParty, makeGstin, setupBillingScenario } from '../../test-support/factories.js';
 import { createSalesInvoice } from '../invoices/salesInvoice.service.js';
 import { updateParty } from './party.service.js';
-import { updateProduct } from './product.service.js';
+import { createProduct, suggestKgConversion, updateProduct } from './product.service.js';
 
 const ctxOf = () => ({ ipAddress: '127.0.0.1', userAgent: 'itest' });
 
@@ -217,6 +217,81 @@ describe('editing masters (integration)', () => {
         ctxOf(),
       ),
       /Haryana/,
+    );
+  });
+
+  /**
+   * A product counted in kilograms weighs one kilogram per base unit.
+   *
+   * `reamWeightKg` computes the weight of a *ream*, which is the base unit's
+   * weight only when the base unit is a ream. Storing it against a kg-held
+   * product produced two visible wrongs — "One kilogram weighs 2.3389 kg" on
+   * the product screen, and a `grossWeightKg` that would declare 278 kg of
+   * paper as 650 kg on an e-way bill.
+   */
+  it('does not give a kilogram the weight of a ream', async () => {
+    const { ctx } = scenario;
+
+    const kgProduct = await createProduct(
+      ctx.businessId,
+      ctx.userId,
+      {
+        name: 'Copier Paper FS 75gsm',
+        hsnCodeId: ctx.hsnCodeId,
+        baseUnitId: ctx.unitIds.kg,
+        gsm: 75,
+        sheetSize: 'A4',
+        sheetsPerReam: 500,
+      },
+      ctxOf(),
+    );
+
+    assert.equal(
+      kgProduct.weightPerBaseUnitKg?.toString(),
+      '1',
+      'one kilogram weighs one kilogram, whatever the paper spec says',
+    );
+
+    // And nothing invents a kg conversion for a product already held in kg.
+    const units = await prisma.productUnit.findMany({
+      where: { productId: kgProduct.id },
+      include: { unit: true },
+    });
+    assert.equal(units.length, 1);
+    assert.equal(units[0]!.unit.uqc, 'KGS');
+    assert.equal(units[0]!.conversionToBase.toString(), '1');
+
+    const suggestion = await suggestKgConversion(ctx.businessId, kgProduct.id);
+    assert.equal(suggestion.available, false);
+    assert.match(suggestion.reason!, /already counted in kilograms/);
+  });
+
+  it('still derives a ream weight when the base unit is a ream', async () => {
+    const { ctx } = scenario;
+
+    const reamProduct = await createProduct(
+      ctx.businessId,
+      ctx.userId,
+      {
+        name: 'Copier Paper A4 75gsm ream',
+        hsnCodeId: ctx.hsnCodeId,
+        baseUnitId: ctx.unitIds.ream,
+        gsm: 75,
+        sheetSize: 'A4',
+        sheetsPerReam: 500,
+      },
+      ctxOf(),
+    );
+
+    // 75 g/m² × (0.210 × 0.297 m²) × 500 ÷ 1000 = 2.3389 kg
+    assert.equal(reamProduct.weightPerBaseUnitKg?.toString(), '2.3389');
+
+    const suggestion = await suggestKgConversion(ctx.businessId, reamProduct.id);
+    assert.equal(suggestion.available, true);
+    assert.equal(
+      suggestion.explanation,
+      'One ream weighs 2.3389 kg, so 1 kg = 0.4276 ream.',
+      'both halves of the sentence must name the same unit as the figure',
     );
   });
 

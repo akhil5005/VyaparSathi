@@ -88,6 +88,76 @@ export async function allocateDocumentNumber(
   return { number, sequenceValue: allocated };
 }
 
+export interface PrefixRepair {
+  id: string;
+  businessId: string;
+  documentType: DocumentType;
+  financialYear: string;
+  prefix: string;
+  /// How many numbers this series has already handed out. Those keep the bare
+  /// numbers they were given; the prefix starts applying to the next one.
+  alreadyIssued: number;
+}
+
+/**
+ * Finds — and optionally fixes — series that were created without a prefix.
+ *
+ * Registration used to seed five document types and miss `PURCHASE_INVOICE`
+ * and `PAYMENT_VOUCHER`. `allocateDocumentNumber` creates a missing series
+ * lazily, and before the defaults above were filled in it created them with an
+ * empty prefix, so the first supplier bill on an affected shop came out as
+ * `0001` rather than `PUR/0001`.
+ *
+ * Both holes are closed for new shops, but neither fix can reach a row that
+ * already exists — the seed runs once at registration and the default only
+ * applies at creation. Existing shops have to be repaired in place.
+ *
+ * **Issued numbers are never rewritten.** A document number may be on paper in
+ * somebody's file and reported to the government; renumbering it afterwards is
+ * the history-rewriting this system refuses everywhere else. Only the prefix
+ * for *future* numbers changes, and `alreadyIssued` reports how many bare ones
+ * are being left behind so the caller can say so.
+ *
+ * A prefix somebody deliberately chose is never touched — only blanks.
+ */
+export async function repairMissingPrefixes(
+  db: TxClient,
+  options: { apply?: boolean } = {},
+): Promise<PrefixRepair[]> {
+  const blank = await db.numberSequence.findMany({
+    where: { prefix: '' },
+    orderBy: [{ businessId: 'asc' }, { documentType: 'asc' }],
+  });
+
+  const repairs: PrefixRepair[] = [];
+  for (const series of blank) {
+    const prefix = DEFAULT_PREFIXES[series.documentType];
+    // No default for this type means there is nothing to restore it to; an
+    // empty prefix may well be what it is supposed to have.
+    if (!prefix) continue;
+
+    repairs.push({
+      id: series.id,
+      businessId: series.businessId,
+      documentType: series.documentType,
+      financialYear: series.financialYear,
+      prefix,
+      alreadyIssued: series.nextNumber - 1,
+    });
+  }
+
+  if (options.apply) {
+    for (const repair of repairs) {
+      await db.numberSequence.update({
+        where: { id: repair.id },
+        data: { prefix: repair.prefix },
+      });
+    }
+  }
+
+  return repairs;
+}
+
 /**
  * Shows what the next number will look like without consuming it — for the
  * "new invoice" screen, which should display the number before saving.

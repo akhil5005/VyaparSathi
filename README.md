@@ -117,6 +117,7 @@ generates a new migration from your edits and applies it.
 | `npm run db:seed:catalogue` | Seed a 16-product sample range — **illustrative rates** |
 | `npm run backup:restore -- <file> --owner-password "…"` | Put a backup back into an empty database |
 | `npm run set-password -- --user <phone> --password "…"` | Last-resort password reset — the only recovery an owner has |
+| `npm run repair:number-prefixes [-- --apply]` | Restores a blank prefix on a document series registered before the seed was completed. Dry run by default; never rewrites an issued number |
 | `ITEST_PATTERN="src/modules/x/*.itest.ts" npm run test:integration` | Integration tests for one module only |
 
 `npm run test:integration` needs **no setup** — `embedded-postgres` downloads
@@ -1044,7 +1045,7 @@ GSTR-1 export and backups are built; what remains:
 
 ## Test coverage
 
-**580 tests, all green** — 338 unit + 242 integration.
+**587 tests, all green** — 338 unit + 249 integration.
 
 ### Unit (`npm test`) — pure logic, no database
 
@@ -1075,13 +1076,14 @@ transactions are atomic and that the row locks actually serialise.
 
 | Area | What's pinned |
 |---|---|
-| Numbering | Sequential and gap-free; **20 concurrent allocations produce 20 distinct numbers**; a rollback returns the number to the pool; series isolated per document type, per financial year, per business |
+| Numbering | Sequential and gap-free; **20 concurrent allocations produce 20 distinct numbers**; a rollback returns the number to the pool; series isolated per document type, per financial year, per business; a blank prefix is repairable in place, a dry run writes nothing, **a number already issued is never renumbered**, and a prefix chosen on purpose is never overwritten |
 | Sales invoice | Issue writes invoice + stock + ledger + balance together; a mid-transaction failure leaves **nothing** behind; 10 concurrent invoices lose no stock; cancel reverses with contra entries and keeps the number; drafts touch nothing |
 | Purchases | Moving average blends across receipts; freight lands in cost but claimable GST does not; kg→ream conversion; negative stock takes the incoming rate; **5 concurrent receipts of one product don't lose an average update**; duplicate supplier bills rejected |
 | Payments | FIFO settles oldest-first; overpayment sits on account; **6 concurrent receipts never over-allocate an invoice**; reversal reopens bills without deleting the payment |
 | Supplier payments | Money out settles purchase bills oldest-first and moves the balance the other way; the voucher takes its own `PAY/` series rather than sharing the receipt book; an advance applies to a bill entered later; **paying a firm you also sell to leaves its sales invoices untouched**; reversal reopens the supplier bill |
 | Party ledger | Newest-first by insertion so every balance follows from the row below; paging never skips, repeats or reorders; the balance stays coherent across the page seam; filtering uses the document date, not the typing date |
 | One account, both roles | A sale and a purchase to the same firm land on one ledger and net to zero; **a date-filtered statement carries the earlier balance forward instead of closing on the period's own movement**; asking for the whole account reports no opening balance rather than double-counting its first entry; ascending order builds downward; the party record counts sales *and* purchases; the first real supplier account is reproduced date for date, including an entry on the closing day of the range; another firm's entries stay out |
+| Editing masters | A rename leaves past invoices saying what they said; an HSN change moves future tax and not issued tax; a discontinued product keeps its stock; **a kilogram is not given the weight of a ream**, and a ream still is; cross-tenant edits refused |
 | Cheques | Posted on receipt; clearing doesn't double-count; a bounce reopens the bill and adds bank charges; illegal status transitions refused |
 | Notes | **Tax credited at the original rate after the HSN rate changes**; the same goods can't be credited twice, across notes *or* within one; money-only notes don't consume return quota; purchase returns push stock back out; cancelling frees the quantity again |
 | ITC | Output tax netted against input credit *and* against notes on both sides; double-claiming refused; ineligible bills excluded |
@@ -1107,6 +1109,8 @@ guards and confirming it fails:
 | Drop `PURCHASE_INVOICE` and `PAYMENT_VOUCHER` from the registration seed | the "registration seeds every series" test |
 | Close a date-filtered ledger on the period's movement, ignoring what was brought forward | the "carries the earlier balance" test |
 | Accept an unbounded year on a date query parameter | the "out-of-range year is a validation error" test |
+| Store a ream's weight against a product counted in kilograms | the "does not give a kilogram the weight of a ream" test |
+| Renumber documents already issued while repairing a blank series prefix | the "leaves numbers already issued alone" test |
 
 That last row is the reason this table exists. The first attempt at the
 cross-tenant check only covered *reads*, so removing the tenant filter from
@@ -1114,7 +1118,13 @@ cross-tenant check only covered *reads*, so removing the tenant filter from
 until the mutation was tried. Cross-tenant writes are now covered separately —
 update, cancel, bill-against-another-firm's-customer, and print.
 
-**Eight real bugs were found this way**, the newest by fat-fingering a date box
+**Nine real bugs were found this way.** The most recent came from entering a
+product held in kilograms: `reamWeightKg` computes the weight of a *ream*,
+which is the base unit's weight only when the base unit is a ream, so a kg-held
+product was stored as weighing 2.3389 kg per kilogram. The visible half was the
+nonsense sentence "One kilogram weighs 2.3389 kg"; the latent half was
+`grossWeightKg`, which would have declared 278 kg of paper as 650 kg on an
+e-way bill. Another came by fat-fingering a date box
 on the live site: `z.coerce.date()` accepts any year JavaScript can represent,
 so a mistyped `82026` sailed through validation and 500'd in the driver. It was
 never one endpoint's bug — thirty call sites took an unbounded date — so the
@@ -1150,6 +1160,21 @@ It is an allowlist now.
 - [ ] Enter opening stock per product with its cost.
 - [ ] Replace the dev-only reset-link logging in `auth.controller.ts` with real
       SMS/WhatsApp delivery.
+- [ ] Run `npm run repair:number-prefixes` against the live database. A shop
+      registered before the seed was completed has a `PURCHASE_INVOICE` or
+      `PAYMENT_VOUCHER` series with a blank prefix, numbering `0001` instead of
+      `PUR/0001`. It prints a dry run first and never rewrites a number that has
+      already been issued.
+- [ ] Decide what **FS** measures. The sheet-size parser takes ISO sizes and
+      explicit dimensions but not Indian trade names, so an FS product currently
+      has to be entered as `8.5x13` (inches) or left without a size — and
+      without one there is no reams↔kg conversion for it. The number is a call
+      for whoever knows the mill, not a default worth guessing.
+- [ ] Add **alias names** to the product form. `Product.aliasNames` is what the
+      bill scanner and voice matcher search, and it is the difference between
+      `Copier Paper48025690 FS 75-10 BOXES` on a supplier's bill matching a
+      product or not. The column exists and the API accepts it; only the form
+      field is missing.
 
 ---
 

@@ -46,15 +46,25 @@ export async function createProduct(
     );
   }
 
-  // Derive the ream weight from the paper spec unless it was given explicitly.
-  const derivedWeight = reamWeightKg({
-    gsm: input.gsm,
-    sheetSize: input.sheetSize,
-    sheetsPerReam: input.sheetsPerReam,
-  });
+  /**
+   * Derive the weight of one base unit from the paper spec, unless it was
+   * given explicitly.
+   *
+   * `reamWeightKg` computes the weight of a *ream*, which is only the weight
+   * of a base unit when the base unit is a ream. A product held in kilograms
+   * weighs one kilogram per base unit by definition, and storing the ream
+   * weight against it would make `grossWeightKg` multiply a kg quantity by
+   * 2.3389 — 278 kg of paper declared as 650 kg on an e-way bill.
+   */
   const weightPerBaseUnitKg = input.weightPerBaseUnitKg
     ? D(input.weightPerBaseUnitKg)
-    : derivedWeight;
+    : baseUnit.uqc === KG_UQC
+      ? D(1)
+      : reamWeightKg({
+          gsm: input.gsm,
+          sheetSize: input.sheetSize,
+          sheetsPerReam: input.sheetsPerReam,
+        });
 
   const openingStock = D(input.openingStock ?? 0);
   const openingRate = D(input.openingStockRate ?? 0);
@@ -207,11 +217,20 @@ export async function updateProduct(
   if (patch.weightPerBaseUnitKg !== undefined) {
     weightPerBaseUnitKg = D(patch.weightPerBaseUnitKg);
   } else if (specChanged) {
-    weightPerBaseUnitKg = reamWeightKg({
-      gsm: patch.gsm ?? product.gsm ?? undefined,
-      sheetSize: patch.sheetSize ?? product.sheetSize ?? undefined,
-      sheetsPerReam: patch.sheetsPerReam ?? product.sheetsPerReam ?? undefined,
+    // Same rule as on create: a ream weight is only the base-unit weight when
+    // the base unit is a ream. A kg-held product weighs 1 kg per base unit.
+    const baseUnit = await prisma.unit.findUnique({
+      where: { id: product.baseUnitId },
+      select: { uqc: true },
     });
+    weightPerBaseUnitKg =
+      baseUnit?.uqc === KG_UQC
+        ? D(1)
+        : reamWeightKg({
+            gsm: patch.gsm ?? product.gsm ?? undefined,
+            sheetSize: patch.sheetSize ?? product.sheetSize ?? undefined,
+            sheetsPerReam: patch.sheetsPerReam ?? product.sheetsPerReam ?? undefined,
+          });
   }
 
   const { autoDeriveKgConversion: _auto, ...rest } = patch;
@@ -426,14 +445,30 @@ export async function suggestKgConversion(businessId: string, productId: string)
     };
   }
 
+  /**
+   * A product already held in kilograms needs no conversion — it is the unit
+   * the mill bills in. Saying "one kilogram weighs 1 kg, so 1 kg = 1 kilogram"
+   * is true and useless, so say the useful thing instead.
+   */
+  if (product.baseUnit.uqc === KG_UQC) {
+    return {
+      available: false,
+      reason: `${product.name} is already counted in kilograms, so no kg conversion is needed.`,
+    };
+  }
+
   const factor = kgToBaseUnitFactor(weight);
+  const unit = product.baseUnit.name.toLowerCase();
   return {
     available: true,
     weightPerBaseUnitKg: round4(weight),
     conversionToBase: factor,
+    // Both halves name the base unit, and the figure is that unit's weight —
+    // this used to read "one kilogram weighs 2.3389 kg" on a kg-held product,
+    // because the weight was a ream's and the label was the base unit's.
     explanation:
-      `One ${product.baseUnit.name.toLowerCase()} weighs ${round4(weight).toString()} kg, ` +
-      `so 1 kg = ${factor?.toString()} ${product.baseUnit.name.toLowerCase()}.`,
+      `One ${unit} weighs ${round4(weight).toString()} kg, ` +
+      `so 1 kg = ${factor?.toString()} ${unit}.`,
   };
 }
 

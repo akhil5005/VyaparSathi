@@ -10,7 +10,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { prisma, resetDatabase, disconnect } from '../../test-support/db.js';
 import { createTestBusiness, type TestContext } from '../../test-support/factories.js';
-import { allocateDocumentNumber, peekDocumentNumber } from './numbering.js';
+import { allocateDocumentNumber, peekDocumentNumber, repairMissingPrefixes } from './numbering.js';
 import { currentFinancialYear } from '../../lib/financialYear.js';
 
 describe('document numbering (integration)', () => {
@@ -140,5 +140,104 @@ describe('document numbering (integration)', () => {
 
     assert.equal(a.number, 'INV/0001');
     assert.equal(b.number, 'INV/0001');
+  });
+
+  /**
+   * Repairing shops that were registered before the seed was completed.
+   *
+   * The bug is closed for new shops twice over — registration seeds every type
+   * and `DEFAULT_PREFIXES` covers the lazy path — but neither reaches a series
+   * row that already exists. This is the only way an affected shop gets its
+   * prefix back, and since it writes to live data it is worth more care than
+   * most maintenance code.
+   */
+  describe('repairing a series created without a prefix', () => {
+    /**
+     * Exactly what the lazy path used to produce, before the defaults existed.
+     *
+     * Upserted rather than created, because the test factory seeds every
+     * series — which is itself how the production gap stayed hidden for so
+     * long: the fixture was more complete than registration.
+     */
+    async function damage(documentType: 'PURCHASE_INVOICE' | 'PAYMENT_VOUCHER', issued = 0) {
+      return prisma.numberSequence.upsert({
+        where: {
+          businessId_documentType_financialYear: {
+            businessId: ctx.businessId,
+            documentType,
+            financialYear: fy,
+          },
+        },
+        create: {
+          businessId: ctx.businessId,
+          documentType,
+          financialYear: fy,
+          prefix: '',
+          padding: 4,
+          nextNumber: issued + 1,
+        },
+        update: { prefix: '', padding: 4, nextNumber: issued + 1 },
+      });
+    }
+
+    it('reports what it would change and writes nothing without --apply', async () => {
+      const series = await damage('PURCHASE_INVOICE');
+
+      const found = await repairMissingPrefixes(prisma);
+      assert.equal(found.length, 1);
+      assert.equal(found[0]!.documentType, 'PURCHASE_INVOICE');
+      assert.equal(found[0]!.prefix, 'PUR/');
+
+      const untouched = await prisma.numberSequence.findUnique({ where: { id: series.id } });
+      assert.equal(untouched!.prefix, '', 'a dry run must not write');
+    });
+
+    it('restores the prefix so the next number is numbered properly', async () => {
+      await damage('PURCHASE_INVOICE');
+
+      await repairMissingPrefixes(prisma, { apply: true });
+
+      const next = await prisma.$transaction((tx) =>
+        allocateDocumentNumber(tx, ctx.businessId, 'PURCHASE_INVOICE', fy),
+      );
+      assert.equal(next.number, 'PUR/0001');
+    });
+
+    it('leaves numbers already issued alone, and says how many', async () => {
+      // The live case: one bill went out as "0001" before anyone noticed.
+      await damage('PURCHASE_INVOICE', 1);
+
+      const [repair] = await repairMissingPrefixes(prisma, { apply: true });
+      assert.equal(repair!.alreadyIssued, 1);
+
+      // The prefix applies from the *next* number. 0001 keeps its bare form,
+      // because a number that has gone out is never rewritten.
+      const next = await prisma.$transaction((tx) =>
+        allocateDocumentNumber(tx, ctx.businessId, 'PURCHASE_INVOICE', fy),
+      );
+      assert.equal(next.number, 'PUR/0002');
+    });
+
+    it('never overwrites a prefix somebody chose on purpose', async () => {
+      await prisma.numberSequence.updateMany({
+        where: { businessId: ctx.businessId, documentType: 'SALES_INVOICE' },
+        data: { prefix: 'MPH/' },
+      });
+
+      const repairs = await repairMissingPrefixes(prisma, { apply: true });
+      assert.equal(
+        repairs.some((r) => r.documentType === 'SALES_INVOICE'),
+        false,
+      );
+
+      const kept = await prisma.numberSequence.findFirst({
+        where: { businessId: ctx.businessId, documentType: 'SALES_INVOICE' },
+      });
+      assert.equal(kept!.prefix, 'MPH/');
+    });
+
+    it('finds nothing on a shop registered after the fix', async () => {
+      assert.deepEqual(await repairMissingPrefixes(prisma), []);
+    });
   });
 });
